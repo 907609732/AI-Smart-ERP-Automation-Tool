@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>商品库存 - 轻量 ERP</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <nav class="module-nav" aria-label="ERP模块">
+        <div class="page-title nav-title">
+          <span class="app-dot"></span>
+          <div>
+            <h1>商品库存</h1>
+            <p>库存、销量、预警和导入报表统一管理</p>
+          </div>
+        </div>
+        <div class="tab-list">
+          <button class="active" data-module-tab="inventory">库存总览</button>
+          <button data-module-tab="orders">订单管理</button>
+          <button data-module-tab="store-products">店铺商品管理</button>
+          <button data-module-tab="import">导入中心</button>
+          <button data-module-tab="business">经营看板</button>
+          <button data-module-tab="ops">采购售后</button>
+          <button data-module-tab="competitor">同行分析</button>
+        </div>
+        <div class="top-status nav-status">
+          <span>本地 ERP</span>
+          <strong>五成</strong>
+        </div>
+      </nav>
+
+      <main>
+        <section class="inventory-workbench" data-module="inventory">
+          <div class="soft-strip"></div>
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <button class="primary">新增入库</button>
+              <label class="file-action">
+                <span>导入库存</span>
+                <input id="quickInventoryFile" type="file" accept=".xlsx,.xls,.csv,.tsv" />
+              </label>
+              <button id="exportInventoryBtn">导出</button>
+            </div>
+            <div class="toolbar-right">
+              <select id="inventoryWarehouse"></select>
+              <button id="refreshBtn">刷新</button>
+              <button id="sendInventoryBtn">预警</button>
+            </div>
+          </div>
+
+          <div class="erp-table-wrap">
+            <table class="erp-table">
+              <thead>
+                <tr>
+                  <th class="select-col"><input type="checkbox" /></th>
+                  <th class="seq-col">序号</th>
+                  <th class="image-col">图片</th>
+                  <th class="name-col">商品名称 / 商品编码 ↑</th>
+                  <th>总库存数 ⓘ ↑</th>
+                  <th>当前仓库存数</th>
+                  <th>成本价</th>
+                  <th>预警线</th>
+                  <th>订单占有数 ↑</th>
+                  <th class="trend-col">近30天销量趋势 ⓘ</th>
+                  <th>库存可售天数 ⓘ</th>
+                  <th>7天销量 ⓘ</th>
+                  <th>15天销量 ⓘ</th>
+                  <th>7天退货量 ⓘ ↑</th>
+                  <th>15天退货量 ⓘ</th>
+                  <th class="op-col">操作</th>
+                </tr>
+              </thead>
+              <tbody id="inventoryBody"></tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="4">小计</td>
+                  <td id="subtotalQuantity">0</td>
+                  <td id="subtotalWarehouseQuantity">0</td>
+                  <td></td>
+                  <td></td>
+                  <td id="subtotalReserved">0</td>
+                  <td></td>
+                  <td></td>
+                  <td id="subtotalSales7">0</td>
+                  <td id="subtotalSales15">0</td>
+                  <td id="subtotalReturn7">0</td>
+                  <td id="subtotalReturn15">0</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+
+        <section class="unmanaged-panel" data-module="inventory">
+          <details id="unmanagedDetails">
+            <summary>
+              <span>待维护订单商品</span>
+              <em id="unmanagedCount">0 条</em>
+            </summary>
+            <p class="panel-note">
+              订单导入时没有匹配到正式 SKU 的商品会先放在这里，绑定到正式库存商品后再补扣库存。
+            </p>
+            <div class="erp-table-wrap compact-wrap">
+              <table class="erp-table compact-table">
+                <thead>
+                  <tr>
+                    <th>平台</th>
+                    <th>商品编码 / 临时SKU</th>
+                    <th>商品标题</th>
+                    <th>规格</th>
+                    <th>订单数量</th>
+                    <th>订单金额</th>
+                    <th>状态</th>
+                    <th>绑定正式 SKU</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="unmanagedInventoryBody"></tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+        <section class="summary-dock" id="metrics" data-module="inventory"></section>
+
+        <section class="drawer-grid">
+          <div class="panel" data-module="orders">
+            <div class="panel-head">
+              <h2>订单管理</h2>
+              <span class="panel-note">只展示订单信息；销售额、扣库存、待匹配等经营分析放到经营看板和店铺商品管理。</span>
+            </div>
+            <div class="filter-bar">
+              <label>月份 <input id="ordersMonth" type="month" /></label>
+              <label>店铺 <select id="ordersStore"></select></label>
+              <button id="ordersFilterReset">全部订单</button>
+            </div>
+            <div id="orderMetrics" class="business-metrics order-metrics"></div>
+            <div class="chart-grid order-grid">
+              <div>
+                <h3>订单状态</h3>
+                <div id="orderStatusChart" class="bar-chart"></div>
+              </div>
+              <div>
+                <h3>店铺汇总</h3>
+                <div id="orderStoreChart" class="bar-chart"></div>
+              </div>
+            </div>
+            <h3 class="table-title">最近订单</h3>
+            <table>
+              <thead>
+                <tr><th>平台</th><th>店铺</th><th>订单号</th><th>时间</th><th>状态</th><th>明细数</th><th>数量</th><th>金额</th></tr>
+              </thead>
+              <tbody id="ordersBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="drawer-grid">
+          <div class="panel" data-module="store-products">
+            <div class="panel-head">
+              <h2>店铺商品管理</h2>
+              <span class="panel-note">维护平台商品编码和 ERP SKU 的映射，用来解决订单缺少商家编码时无法扣库存的问题。</span>
+            </div>
+            <div class="actions">
+              <button id="rematchOrdersBtn">重新匹配并补扣库存</button>
+            </div>
+            <h3 class="table-title">商品编码映射</h3>
+            <table>
+              <thead>
+                <tr><th>平台</th><th>商品编码</th><th>规格</th><th>绑定 SKU</th><th>商品</th><th>更新时间</th></tr>
+              </thead>
+              <tbody id="mappingBody"></tbody>
+            </table>
+            <h3 class="table-title">待匹配订单明细</h3>
+            <table>
+              <thead>
+                <tr><th>订单号</th><th>商品编码</th><th>商品</th><th>规格</th><th>数量</th><th>金额</th><th>绑定到 SKU</th><th>操作</th></tr>
+              </thead>
+              <tbody id="unmatchedOrdersBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="drawer-grid">
+          <div class="panel" data-module="import">
+            <h2>导入中心</h2>
+            <form id="inventoryForm" class="import-form">
+              <h3>库存导入</h3>
+              <label>仓库 <select name="warehouseId" id="inventoryWarehouseForm"></select></label>
+              <label>盘点日期 <input name="snapshotDate" type="date" /></label>
+              <label>文件 <input name="file" type="file" accept=".xlsx,.xls,.csv,.tsv" required /></label>
+              <button>导入库存</button>
+            </form>
+
+            <form id="ordersForm" class="import-form">
+              <h3>订单导入</h3>
+              <label>平台 <select name="platform" id="ordersPlatform"></select></label>
+              <label>店铺 <input name="store" id="ordersStoreForm" list="storeOptions" value="店口五金店" /></label>
+              <label>文件 <input name="file" type="file" accept=".xlsx,.xls,.csv,.tsv" required /></label>
+              <button>导入订单</button>
+            </form>
+            <datalist id="storeOptions"></datalist>
+
+            <form id="shippingForm" class="import-form">
+              <h3>邮费导入</h3>
+              <label>平台 <select name="platform" id="shippingPlatform"></select></label>
+              <label>月份 <input name="feeMonth" type="month" /></label>
+              <label>文件 <input name="file" type="file" accept=".xlsx,.xls,.csv,.tsv,.zip" required /></label>
+              <button>导入邮费</button>
+            </form>
+            <p id="importMessage" class="message"></p>
+            <table class="mini-table">
+              <thead>
+                <tr><th>类型</th><th>来源</th><th>成功</th><th>时间</th></tr>
+              </thead>
+              <tbody id="importsBody"></tbody>
+            </table>
+
+            <h2 class="subsection-title">已保存导入文件</h2>
+            <table>
+              <thead>
+                <tr><th>文件</th><th>类型</th><th>店铺</th><th>行数</th><th>时间</th><th></th></tr>
+              </thead>
+              <tbody id="savedFilesBody"></tbody>
+            </table>
+          </div>
+
+          <div class="panel" data-module="business">
+            <div class="panel-head">
+              <h2>经营看板</h2>
+              <button id="importProjectBtn">重新扫描项目文件</button>
+            </div>
+            <div class="actions">
+              <label>月份 <input id="businessMonth" type="month" /></label>
+              <button id="sendMonthlyBtn">发送钉钉月报</button>
+            </div>
+            <div id="businessMetrics" class="business-metrics"></div>
+            <div class="chart-grid">
+              <div>
+                <h3>月度销售额</h3>
+                <div id="salesChart" class="bar-chart"></div>
+              </div>
+              <div>
+                <h3>月度邮费</h3>
+                <div id="shippingChart" class="bar-chart"></div>
+              </div>
+              <div>
+                <h3>采购与售后</h3>
+                <div id="opsChart" class="bar-chart"></div>
+              </div>
+              <div>
+                <h3>平台销售</h3>
+                <div id="platformChart" class="bar-chart"></div>
+              </div>
+            </div>
+            <h3 class="table-title">SKU 月度销售明细</h3>
+            <table>
+              <thead>
+                <tr><th>SKU</th><th>商品</th><th>销量</th><th>销售额</th><th>商品成本</th><th>预估毛利</th></tr>
+              </thead>
+              <tbody id="salesBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="drawer-grid">
+          <div class="panel" data-module="ops">
+            <h2>采购与售后明细</h2>
+            <div class="split-lists">
+              <div>
+                <h3>最近采购</h3>
+                <table>
+                  <thead><tr><th>日期</th><th>商品</th><th>金额</th><th>平台</th></tr></thead>
+                  <tbody id="purchaseBody"></tbody>
+                </table>
+              </div>
+              <div>
+                <h3>最近售后</h3>
+                <table>
+                  <thead><tr><th>平台</th><th>商品</th><th>金额</th><th>状态</th></tr></thead>
+                  <tbody id="returnsBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+        <section class="drawer-grid">
+          <div class="panel" data-module="competitor">
+            <div class="panel-head">
+              <h2>同行数据分析</h2>
+              <button id="snapshotBtn">抓取当前 SKU 公开数据</button>
+            </div>
+            <div class="filter-bar">
+              <label>选择 SKU <select id="competitorSkuSelect"></select></label>
+              <button id="snapshotAllBtn">抓取全部启用链接</button>
+            </div>
+            <div id="competitorSkuCard" class="business-metrics order-metrics"></div>
+            <form id="competitorForm" class="import-form compact">
+              <label>名称 <input name="label" required placeholder="我的淘宝链接 / 同行A" /></label>
+              <label>平台
+                <select name="platform">
+                  <option value="淘宝">淘宝</option>
+                  <option value="拼多多">拼多多</option>
+                  <option value="京东">京东</option>
+                </select>
+              </label>
+              <label>关系
+                <select name="relation">
+                  <option value="competitor">同行</option>
+                  <option value="own">我的商品</option>
+                </select>
+              </label>
+              <label>链接 <input name="url" type="url" required /></label>
+              <label>备注 <input name="note" placeholder="店铺、规格或观察点" /></label>
+              <button>添加链接</button>
+            </form>
+            <div class="chart-grid order-grid">
+              <div>
+                <h3>价格曲线</h3>
+                <div id="competitorPriceChart" class="bar-chart"></div>
+              </div>
+              <div>
+                <h3>销量曲线</h3>
+                <div id="competitorSalesChart" class="bar-chart"></div>
+              </div>
+            </div>
+            <h3 class="table-title">当前 SKU 链接</h3>
+            <table>
+              <thead>
+                <tr><th>名称</th><th>关系</th><th>平台</th><th>价格</th><th>销量</th><th>状态</th><th>启用</th><th>操作</th></tr>
+              </thead>
+              <tbody id="competitorBody"></tbody>
+            </table>
+            <details class="unmanaged-panel inline-details">
+              <summary><span>未绑定链接</span><em id="unboundCompetitorCount">0 条</em></summary>
+              <table>
+                <thead>
+                  <tr><th>名称</th><th>平台</th><th>链接</th><th>绑定到当前 SKU</th></tr>
+                </thead>
+                <tbody id="unboundCompetitorBody"></tbody>
+              </table>
+            </details>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+.env
+.env.local
+.DS_Store
+.plastic/
+node_modules/
+downloads/
+uploads/
+data/
+reports/
+state/
+logs/
+*.log
+cloaked.conf
+hidden_changes.conf
+ignore.conf

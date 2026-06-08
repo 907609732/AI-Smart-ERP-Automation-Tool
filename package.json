@@ -1,0 +1,24 @@
+{
+  "name": "cainiao-inventory-automation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "erp": "node src/erp/server.js",
+    "manual-login": "node src/manual-login.js",
+    "setup": "playwright install chromium",
+    "run": "node src/run.js",
+    "run:headed": "HEADLESS=false node src/run.js",
+    "test:process": "node src/process-inventory.js"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.17",
+    "axios": "^1.7.9",
+    "better-sqlite3": "^12.10.0",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "multer": "^2.1.1",
+    "playwright": "^1.49.1",
+    "xlsx": "^0.18.5"
+  }
+}

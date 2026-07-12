@@ -1,6 +1,7 @@
 ARG NODE_IMAGE=node:24-bookworm-slim
 FROM ${NODE_IMAGE}
 ARG APT_MIRROR=""
+ARG NPM_CONFIG_REGISTRY=""
 
 WORKDIR /app
 
@@ -16,7 +17,8 @@ RUN if [ -n "$APT_MIRROR" ]; then \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN if [ -n "$NPM_CONFIG_REGISTRY" ]; then npm config set registry "$NPM_CONFIG_REGISTRY"; fi \
+  && npm ci --omit=dev
 
 COPY core ./core
 COPY web ./web

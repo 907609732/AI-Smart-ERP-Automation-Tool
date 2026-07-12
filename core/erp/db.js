@@ -288,6 +288,32 @@ function migrate(database) {
       UNIQUE (platform, code_type, code_value, attributes),
       FOREIGN KEY (sku) REFERENCES skus(sku) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS barcode_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sku TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL DEFAULT '',
+      label_width_mm REAL NOT NULL DEFAULT 40,
+      label_height_mm REAL NOT NULL DEFAULT 60,
+      elements_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (sku) REFERENCES skus(sku) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS monthly_outbound (
+      sku TEXT NOT NULL,
+      warehouse_id TEXT NOT NULL DEFAULT 'cainiao',
+      month TEXT NOT NULL,
+      toc_sales REAL NOT NULL DEFAULT 0,
+      tob_sales REAL NOT NULL DEFAULT 0,
+      total_outbound REAL NOT NULL DEFAULT 0,
+      near_30_days_sales REAL NOT NULL DEFAULT 0,
+      imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (sku, warehouse_id, month),
+      FOREIGN KEY (sku) REFERENCES skus(sku) ON DELETE CASCADE,
+      FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE
+    );
   `);
 
   ensureColumn(database, "skus", "barcode", "TEXT NOT NULL DEFAULT ''");
@@ -341,9 +367,14 @@ function ensureColumn(database, table, column, definition) {
 }
 
 export function nowDate() {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
 }
 
 export function currentMonth() {
-  return new Date().toISOString().slice(0, 7);
+  return nowDate().slice(0, 7);
 }

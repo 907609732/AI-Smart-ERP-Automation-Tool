@@ -4,21 +4,37 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "erp": "node src/erp/server.js",
-    "manual-login": "node src/manual-login.js",
+    "erp": "node core/erp/server.js",
+    "manual-login": "node core/manual-login.js",
     "setup": "playwright install chromium",
-    "run": "node src/run.js",
-    "run:headed": "HEADLESS=false node src/run.js",
-    "test:process": "node src/process-inventory.js"
+    "run": "node core/run.js",
+    "run:headed": "HEADLESS=false node core/run.js",
+    "test:process": "node core/process-inventory.js",
+    "set-folder-comments": "node automation/set-folder-comments.mjs",
+    "sync:inventory": "node core/sync-cainiao-inventory-file.js",
+    "sync:inventory:force": "node core/sync-cainiao-inventory-file.js --force",
+    "watch:inventory": "node core/watch-cainiao-inventory.js",
+    "pdd:snapshot": "node core/pdd-mobile-snapshot.js",
+    "pdd:login": "node core/pdd-mobile-snapshot.js --login",
+    "test:login": "node core/playwright-login.js",
+    "test:orders": "node core/playwright-automation.js",
+    "test:verify": "node core/playwright-verify.js",
+    "inventory:export": "node core/playwright-inventory-export.js",
+    "sync:inventory:full": "node core/sync-cainiao-inventory.js",
+    "monthly:report": "node core/monthly-report.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",
     "axios": "^1.7.9",
     "better-sqlite3": "^12.10.0",
+    "bwip-js": "^4.11.1",
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
     "multer": "^2.1.1",
     "playwright": "^1.49.1",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0"
   }
 }

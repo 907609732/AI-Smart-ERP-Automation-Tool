@@ -1,0 +1,34 @@
+services:
+  erp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
+    container_name: ai-smart-erp
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      ERP_PORT: 3000
+      TZ: Asia/Shanghai
+    ports:
+      # 生产环境建议只监听本机，由宝塔/Nginx/Caddy 反向代理到 127.0.0.1:3000。
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./downloads:/app/downloads
+      - ./reports:/app/reports
+      - ./state:/app/state
+      - ./logs:/app/logs
+      - ./config.json:/app/config.json:ro
+    mem_limit: 768m
+    cpus: 1.5
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

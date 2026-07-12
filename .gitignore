@@ -1,5 +1,6 @@
 .env
 .env.local
+.env.production
 .DS_Store
 .plastic/
 node_modules/
@@ -9,6 +10,10 @@ data/
 reports/
 state/
 logs/
+backups/
+test-results/
+tests/.auth/
+临时数据/
 *.log
 cloaked.conf
 hidden_changes.conf

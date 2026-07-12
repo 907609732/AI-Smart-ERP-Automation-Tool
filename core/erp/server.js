@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import express from "express";
 import multer from "multer";
 import { fileURLToPath } from "node:url";
@@ -15,7 +16,7 @@ import {
   runCompetitorSnapshots,
   updateCompetitor
 } from "./competitors.js";
-import { importInventoryFile, importOrdersFile, importShippingFile } from "./importers.js";
+import { importInventoryFile, importMonthlyOutboundFile, importOrdersFile, importShippingFile } from "./importers.js";
 import {
   listProductCodeMappings,
   matchUnmanagedOrderItem,
@@ -38,9 +39,16 @@ import {
   updateSku
 } from "./reports.js";
 import { importProjectFolder } from "./import-project-folder.js";
+import {
+  getBarcodeCatalog,
+  getBarcodeTemplate,
+  listBarcodePrinters,
+  renderBarcodeSvg,
+  saveBarcodeTemplate
+} from "./barcodes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const publicDir = path.resolve(__dirname, "../../public");
+const publicDir = path.join(rootDir, "web");
 const uploadDir = path.join(rootDir, "uploads");
 const productImageDir = path.join(rootDir, "data", "product-images");
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -49,6 +57,8 @@ fs.mkdirSync(productImageDir, { recursive: true });
 const upload = multer({ dest: uploadDir });
 const app = express();
 
+// server.js 只做“HTTP 编排”：收请求、处理上传、调用业务模块、统一返回。
+// 具体业务规则尽量放在 importers/reports/order-matching 等模块，避免路由膨胀。
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
@@ -84,7 +94,7 @@ app.get("/api/warehouses", (_req, res) => sendJson(res, () => getWarehouses()));
 app.get("/api/skus", (_req, res) => sendJson(res, () => getSkus()));
 app.put("/api/skus/:sku", (req, res) => sendJson(res, () => updateSku(req.params.sku, req.body)));
 app.get("/api/skus/:sku/images", (req, res) => sendJson(res, () => listProductImages(req.params.sku)));
-app.post("/api/skus/:sku/images", upload.array("images", 12), (req, res) =>
+app.post("/api/skus/:sku/images", upload.array("images", 80), (req, res) =>
   sendJson(res, () => saveProductImages(req.params.sku, req.files || []))
 );
 app.put("/api/inventory/:sku/quantity", (req, res) =>
@@ -101,6 +111,7 @@ app.get("/api/operation-logs", (req, res) =>
 
 app.post("/api/import/inventory", upload.single("file"), (req, res) =>
   sendJson(res, () => {
+    // 库存导入会创建/更新正式 SKU，并写库存快照；原始文件统一归档去重。
     const uploadInfo = prepareUploadedFile(req);
     const result = importInventoryFile({
       file: uploadInfo.importPath,
@@ -118,8 +129,32 @@ app.post("/api/import/inventory", upload.single("file"), (req, res) =>
   })
 );
 
+app.post("/api/import/monthly-outbound", upload.single("file"), (req, res) =>
+  sendJson(res, () => {
+    // 菜鸟月度出库只更新 monthly_outbound，不把月末库存当作当前库存。
+    // 当前库存仍以库存导入、手工编辑、订单扣减流水为准。
+    const uploadInfo = prepareUploadedFile(req);
+    const warehouseId = req.body.warehouseId || "cainiao";
+    const month = req.body.month || "";
+    const result = importMonthlyOutboundFile({
+      file: uploadInfo.importPath,
+      warehouseId,
+      month
+    });
+    return withStoredImportFile(uploadInfo, {
+      result,
+      importType: "monthly_outbound",
+      platform: "cainiao",
+      warehouseId,
+      period: month || result.month || "",
+      rowCount: result.rowCount
+    });
+  })
+);
+
 app.post("/api/import/orders", upload.single("file"), (req, res) =>
   sendJson(res, () => {
+    // 订单导入是覆盖式：同平台同订单号会先清掉旧明细和旧扣减，再写最新导入结果。
     const uploadInfo = prepareUploadedFile(req);
     const platform = req.body.platform || "qianniu";
     const store = req.body.store || "店口五金店";
@@ -210,18 +245,59 @@ app.post("/api/orders/rematch-unmatched", (req, res) =>
   sendJson(res, () => rematchUnmatchedOrders({ platform: req.body.platform || "" }))
 );
 
+app.get("/api/barcodes/catalog", (_req, res) => sendJson(res, () => getBarcodeCatalog()));
+app.get("/api/barcodes/template", (req, res) => sendJson(res, () => getBarcodeTemplate(String(req.query.sku || ""))));
+app.post("/api/barcodes/template", (req, res) => sendJson(res, () => saveBarcodeTemplate(req.body || {})));
+app.get("/api/barcodes/printers", async (_req, res) => {
+  try {
+    res.json({ ok: true, data: await listBarcodePrinters() });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+app.get("/api/barcodes/code128.svg", (req, res) => {
+  try {
+    const svg = renderBarcodeSvg({
+      value: String(req.query.value || ""),
+      scale: Number(req.query.scale || 2),
+      height: Number(req.query.height || 18),
+      includetext: req.query.text === "1",
+      type: String(req.query.type || "code128")
+    });
+    res.setHeader("content-type", "image/svg+xml; charset=utf-8");
+    res.send(svg);
+  } catch (error) {
+    res.status(400).send(error.message);
+  }
+});
+
 app.post("/api/dingtalk/send-report", async (req, res) => {
   try {
     const type = req.body.type || "inventory";
     const report =
       type === "monthly"
         ? buildMonthlyMarkdown(req.body.month)
-        : buildInventoryMarkdown();
+        : buildInventoryMarkdown('table');
     const result = await sendDingTalkMarkdown({
       title: report.title,
       text: report.text
     });
     res.json({ ok: true, report, result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/api/sync/cainiao-inventory", (_req, res) => {
+  try {
+    const scriptPath = path.join(rootDir, "core", "sync-cainiao-inventory.js");
+    const child = spawn(process.execPath, [scriptPath], {
+      cwd: rootDir,
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+    res.json({ ok: true, message: "已开始同步菜鸟库存，完成后会推送钉钉消息" });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
@@ -251,6 +327,7 @@ app.get(/.*/, (_req, res) => {
 });
 
 function sendJson(res, fn) {
+  // 大多数同步业务接口共用这个返回格式，前端 api() 也依赖 { ok, data/error } 约定。
   try {
     res.json({ ok: true, data: fn() });
   } catch (error) {
@@ -265,6 +342,7 @@ function prepareUploadedFile(req) {
   const hash = hashFile(req.file.path);
   const existing = getDb().prepare("SELECT stored_path AS storedPath FROM imported_files WHERE hash = ?").get(hash);
 
+  // multer 的临时文件没有扩展名时，Excel 解析库会更难判断格式；这里补回原扩展名。
   if (ext && !req.file.path.endsWith(ext)) {
     const renamed = `${req.file.path}${ext}`;
     fs.renameSync(req.file.path, renamed);
@@ -272,6 +350,7 @@ function prepareUploadedFile(req) {
   }
 
   if (existing?.storedPath && fs.existsSync(existing.storedPath)) {
+    // 相同 hash 的文件只保留一份，重复导入仍会重新解析旧文件，但不重复保存档案。
     fs.rmSync(req.file.path, { force: true });
     getDb()
       .prepare("UPDATE imported_files SET last_used_at = CURRENT_TIMESTAMP WHERE hash = ?")
@@ -303,6 +382,7 @@ function decodeUploadName(name) {
 }
 
 function withStoredImportFile(uploadInfo, meta) {
+  // 业务导入成功后再归档原文件，保证“文件档案”里只出现系统确实处理过的文件。
   if (uploadInfo.duplicate) {
     getDb()
       .prepare(
@@ -366,6 +446,8 @@ function listProductImages(sku) {
 }
 
 function saveProductImages(sku, files) {
+  // 图片按 SKU 分文件夹保存，数据库只记录公开访问 URL 和排序。
+  // 这里允许大量图片，前端弹窗负责预览和选择。
   if (!sku) throw new Error("缺少 SKU。");
   if (!files.length) throw new Error("请选择图片。");
   const db = getDb();

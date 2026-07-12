@@ -1,5 +1,10 @@
 import { getDb, nowDate } from "./db.js";
 
+const DESKTOP_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36";
+const MOBILE_USER_AGENT =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+
 export function listCompetitors({ sku = "" } = {}) {
   const db = getDb();
   const params = {};
@@ -198,49 +203,18 @@ async function snapshotCompetitor(competitor) {
   const db = getDb();
   const date = nowDate();
   try {
+    const platform = normalizePlatform(competitor.platform || competitor.url);
     const response = await fetch(competitor.url, {
-      headers: {
-        "user-agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
-      }
+      headers: buildRequestHeaders(platform)
     });
     const html = await response.text();
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const visibleText = decodeHtml(stripTags(html)).replace(/\s+/g, " ");
-    if (/验证码|滑块|安全验证|登录后|请登录|访问受限|风险验证/.test(visibleText)) {
+    if (needsLoginOrVerification(html, visibleText, platform)) {
       throw new Error("页面出现登录墙、验证码或访问受限。");
     }
 
-    const title = extractTitle(html);
-    const price = extractPrice(html);
-    const salesText = extractSalesText(visibleText);
-    const salesValue = parseSalesValue(salesText);
-    const status = price == null ? "partial" : "ok";
-    const error = price == null ? "未识别到公开价格。" : "";
-
-    db.prepare(
-      `INSERT INTO competitor_snapshots
-       (competitor_id, snapshot_date, title, price, sales_text, sales_value, status, error)
-       VALUES (@competitorId, @snapshotDate, @title, @price, @salesText, @salesValue, @status, @error)
-       ON CONFLICT(competitor_id, snapshot_date) DO UPDATE SET
-         title = excluded.title,
-         price = excluded.price,
-         sales_text = excluded.sales_text,
-         sales_value = excluded.sales_value,
-         status = excluded.status,
-         error = excluded.error,
-         created_at = CURRENT_TIMESTAMP`
-    ).run({
-      competitorId: competitor.id,
-      snapshotDate: date,
-      title,
-      price,
-      salesText,
-      salesValue,
-      status,
-      error
-    });
-    return { id: competitor.id, status, title, price, salesText, salesValue, error };
+    return saveCompetitorSnapshotFromHtml(competitor, { html, visibleText, platform, date });
   } catch (error) {
     db.prepare(
       `INSERT INTO competitor_snapshots
@@ -257,6 +231,87 @@ async function snapshotCompetitor(competitor) {
     });
     return { id: competitor.id, status: "error", error: error.message };
   }
+}
+
+export function saveCompetitorSnapshotFromHtml(competitor, { html, visibleText = "", platform = "", date = nowDate() } = {}) {
+  const db = getDb();
+  const normalizedPlatform = normalizePlatform(platform || competitor.platform || competitor.url);
+  const text = visibleText || decodeHtml(stripTags(html)).replace(/\s+/g, " ");
+  const parsed = parseCompetitorPage({ html, visibleText: text, platform: normalizedPlatform });
+  const title = parsed.title;
+  const price = parsed.price;
+  const salesText = parsed.salesText;
+  const salesValue = parseSalesValue(salesText);
+  const missing = [];
+  if (price == null) missing.push("价格");
+  if (!salesValue && salesText === "不可获取") missing.push("销量");
+  const status = missing.length ? "partial" : "ok";
+  const error = missing.length ? `未识别到公开${missing.join("和")}。` : "";
+
+  db.prepare(
+    `INSERT INTO competitor_snapshots
+     (competitor_id, snapshot_date, title, price, sales_text, sales_value, status, error)
+     VALUES (@competitorId, @snapshotDate, @title, @price, @salesText, @salesValue, @status, @error)
+     ON CONFLICT(competitor_id, snapshot_date) DO UPDATE SET
+       title = excluded.title,
+       price = excluded.price,
+       sales_text = excluded.sales_text,
+       sales_value = excluded.sales_value,
+       status = excluded.status,
+       error = excluded.error,
+       created_at = CURRENT_TIMESTAMP`
+  ).run({
+    competitorId: competitor.id,
+    snapshotDate: date,
+    title,
+    price,
+    salesText,
+    salesValue,
+    status,
+    error
+  });
+  return { id: competitor.id, status, title, price, salesText, salesValue, error };
+}
+
+function buildRequestHeaders(platform) {
+  const isPdd = platform === "拼多多";
+  const headers = {
+    "user-agent": isPdd ? MOBILE_USER_AGENT : DESKTOP_USER_AGENT,
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "zh-CN,zh;q=0.9,en;q=0.8"
+  };
+  if (isPdd) {
+    headers.referer = "https://mobile.yangkeduo.com/";
+    headers["sec-fetch-site"] = "same-origin";
+    headers["sec-fetch-mode"] = "navigate";
+    headers["sec-fetch-dest"] = "document";
+    if (process.env.PDD_COOKIE) headers.cookie = process.env.PDD_COOKIE;
+  }
+  return headers;
+}
+
+function needsLoginOrVerification(html, visibleText, platform) {
+  if (/验证码|滑块|安全验证|登录后|请登录|访问受限|风险验证/.test(visibleText)) return true;
+  if (platform === "拼多多") {
+    const rawData = extractWindowObject(html, "rawData");
+    if (rawData && /["']needLogin["']\s*:\s*true/i.test(rawData)) return true;
+  }
+  return false;
+}
+
+function parseCompetitorPage({ html, visibleText, platform }) {
+  if (platform === "拼多多") {
+    return {
+      title: extractPddTitle(html) || extractTitle(html),
+      price: extractPddPrice(html) ?? extractPrice(html),
+      salesText: extractPddSalesText(html, visibleText) || extractSalesText(visibleText)
+    };
+  }
+  return {
+    title: extractTitle(html),
+    price: extractPrice(html),
+    salesText: extractSalesText(visibleText)
+  };
 }
 
 function ensureActiveSku(sku) {
@@ -306,9 +361,80 @@ function extractPrice(html) {
 
 function extractSalesText(text) {
   const match =
-    text.match(/([0-9.万wW+]+)\s*(?:人付款|人已买|已售|销量|付款|件已售|月销|月售)/) ||
+    text.match(/([0-9.万wW+]+)\s*(?:人付款|人已买|已售|销量|付款|件已售|件已拼|已拼|人拼单|月销|月售)/) ||
     text.match(/(?:销量|已售|付款人数|月销|月售)[:：]?\s*([0-9.万wW+]+)/);
   return match ? match[0].slice(0, 40) : "不可获取";
+}
+
+function extractPddTitle(html) {
+  return firstDecodedMatch(html, [
+    /["']goods_name["']\s*:\s*["']([^"']{2,200})["']/i,
+    /["']goodsName["']\s*:\s*["']([^"']{2,200})["']/i,
+    /["']shareTitle["']\s*:\s*["']([^"']{2,200})["']/i,
+    /["']goodsDesc["']\s*:\s*["']([^"']{2,200})["']/i
+  ]);
+}
+
+function extractPddPrice(html) {
+  const candidates = [];
+  const centKeys =
+    /["'](?:min_group_price|minGroupPrice|min_on_sale_group_price|minOnSaleGroupPrice|min_normal_price|minNormalPrice|group_price|groupPrice|event_price|eventPrice)["']\s*:\s*([0-9]{2,})/gi;
+  for (const match of html.matchAll(centKeys)) {
+    const value = Number(match[1]);
+    const price = value / 100;
+    if (price > 0 && price < 100000) candidates.push(price);
+  }
+
+  const textKeys =
+    /["'](?:priceText|price_text|priceDesc|price_desc|priceTip|price_tip)["']\s*:\s*["'][^0-9"']*([0-9]+(?:\.[0-9]+)?)/gi;
+  for (const match of html.matchAll(textKeys)) {
+    const price = Number(match[1]);
+    if (price > 0 && price < 100000) candidates.push(price);
+  }
+
+  return candidates.length ? Math.min(...candidates) : null;
+}
+
+function extractPddSalesText(html, visibleText) {
+  const jsonValue = firstDecodedMatch(html, [
+    /["']side_sales_tip["']\s*:\s*["']([^"']{1,80})["']/i,
+    /["']sideSalesTip["']\s*:\s*["']([^"']{1,80})["']/i,
+    /["']bottom_sales_tip["']\s*:\s*["']([^"']{1,80})["']/i,
+    /["']bottomSalesTip["']\s*:\s*["']([^"']{1,80})["']/i,
+    /["']sales_tip["']\s*:\s*["']([^"']{1,80})["']/i,
+    /["']salesTip["']\s*:\s*["']([^"']{1,80})["']/i
+  ]);
+  if (jsonValue) return jsonValue.slice(0, 40);
+
+  const salesNumber = html.match(/["']sales["']\s*:\s*([0-9]+)/i)?.[1];
+  if (salesNumber) return `已拼${salesNumber}件`;
+
+  const textMatch =
+    visibleText.match(/([0-9.万wW+]+)\s*(?:件已拼|已拼|人拼单|件已售|已售|销量|月售|月销)/) ||
+    visibleText.match(/(?:已拼|已售|销量|月售|月销)[:：]?\s*([0-9.万wW+]+)/);
+  return textMatch ? textMatch[0].slice(0, 40) : "";
+}
+
+function firstDecodedMatch(text, patterns) {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return decodeJsonText(match[1]).slice(0, 200);
+  }
+  return "";
+}
+
+function decodeJsonText(value) {
+  const text = String(value || "");
+  try {
+    return decodeHtml(JSON.parse(`"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)).trim();
+  } catch {
+    return decodeHtml(text.replace(/\\u002F/g, "/")).trim();
+  }
+}
+
+function extractWindowObject(html, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.match(new RegExp(`window\\.${escaped}\\s*=\\s*(\\{[\\s\\S]*?\\});`, "i"))?.[1] || "";
 }
 
 function parseSalesValue(salesText) {

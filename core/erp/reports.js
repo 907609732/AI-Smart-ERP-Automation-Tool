@@ -154,6 +154,8 @@ export function getOperationLogs({ entityType = "", limit = 80 } = {}) {
 }
 
 export function getInventoryReport({ warehouseId = "" } = {}) {
+  // 库存总览 = 最新库存快照 + 快照之后的库存流水。
+  // 这样导入一次库存后，后续订单扣减和手工调整都能叠加到当前库存。
   const rows = getDb()
     .prepare(
       `WITH latest AS (
@@ -194,6 +196,21 @@ export function getInventoryReport({ warehouseId = "" } = {}) {
   const movementsBySkuWarehouse = new Map(
     movementRows.map((row) => [`${row.sku}\u0000${row.warehouseId}`, Number(row.movementQuantity || 0)])
   );
+
+  const outboundRows = getDb()
+    .prepare(
+      `WITH latest AS (
+         SELECT sku, MAX(month) AS month
+         FROM monthly_outbound
+         GROUP BY sku
+       )
+       SELECT o.sku, o.toc_sales AS tocSales, o.tob_sales AS tobSales,
+              o.total_outbound AS totalOutbound, o.near_30_days_sales AS near30DaysSales
+       FROM monthly_outbound o
+       JOIN latest l ON l.sku = o.sku AND l.month = o.month`
+    )
+    .all();
+  const outboundBySku = new Map(outboundRows.map((row) => [row.sku, row]));
 
   const bySku = new Map();
   const seenSkuWarehouse = new Set();
@@ -292,12 +309,34 @@ export function getInventoryReport({ warehouseId = "" } = {}) {
       normalizedWarehouses.find((row) => row.warehouseId === warehouseId) ||
       normalizedWarehouses.find((row) => row.warehouseId === "cainiao") ||
       normalizedWarehouses[0];
+    const outbound = outboundBySku.get(item.sku);
+    const monthlyOutbound = outbound ? Number(outbound.totalOutbound || 0) : 0;
+    const near30DaysSales = outbound ? Number(outbound.near30DaysSales || 0) : 0;
+    // 补货预警优先使用近 30 天销量，缺失时回退到月度出库总量。
+    // 页面和钉钉都复用 stockAlert，避免出现两个地方口径不一致。
+    const dailyOutbound = near30DaysSales > 0 ? near30DaysSales / 30 : monthlyOutbound > 0 ? monthlyOutbound / 30 : 0;
+    const sellableDays = dailyOutbound > 0 ? item.totalQuantity / dailyOutbound : Infinity;
+
+    let stockAlert = { level: "ok", text: "", days: sellableDays };
+    if (sellableDays < 7) {
+      stockAlert = { level: "critical", text: "不够卖一星期，严重缺货无法发货", days: sellableDays };
+    } else if (sellableDays < 15) {
+      stockAlert = { level: "urgent", text: "不够卖半个月，急需补货", days: sellableDays };
+    } else if (sellableDays < 30) {
+      stockAlert = { level: "warning", text: "不够卖一个月，需要补货", days: sellableDays };
+    }
+
     return {
       ...item,
       warehouses: normalizedWarehouses,
       selectedWarehouse,
       images: imagesBySku.get(item.sku) || [],
-      lowStock: item.totalQuantity <= item.lowStockThreshold
+      lowStock: item.totalQuantity <= item.lowStockThreshold,
+      monthlyOutbound,
+      near30DaysSales,
+      dailyOutbound,
+      sellableDays,
+      stockAlert
     };
   });
 
@@ -305,7 +344,16 @@ export function getInventoryReport({ warehouseId = "" } = {}) {
     generatedAt: new Date().toISOString(),
     totalQuantity: items.reduce((sum, item) => sum + item.totalQuantity, 0),
     skuCount: items.length,
-    lowStockItems: items.filter((item) => item.lowStock).sort((a, b) => a.totalQuantity - b.totalQuantity),
+    // 历史字段名叫 lowStockItems，但现在含义是“按可售天数得出的补货预警项”。
+    // 保留字段名是为了兼容前端和旧接口；新代码请优先看 item.stockAlert。
+    lowStockItems: items
+      .filter((item) => item.stockAlert.level !== "ok")
+      .sort((a, b) => {
+        const levelOrder = { critical: 0, urgent: 1, warning: 2, ok: 3 };
+        const levelDiff = levelOrder[a.stockAlert.level] - levelOrder[b.stockAlert.level];
+        if (levelDiff !== 0) return levelDiff;
+        return a.totalQuantity - b.totalQuantity;
+      }),
     items
   };
 }
@@ -531,6 +579,45 @@ export function getOrdersOverview({ month = "", store = "" } = {}) {
        LIMIT 80`
     )
     .all(params);
+  const recentOrderKeys = recentOrders.map((row) => ({
+    platform: row.platform,
+    orderId: row.orderId
+  }));
+  const recentOrderItems = recentOrderKeys.length
+    ? db
+        .prepare(
+          `SELECT oi.platform, oi.order_id AS orderId, oi.sku, oi.name,
+                  oi.quantity, oi.paid_amount AS paidAmount,
+                  oi.refund_status AS refundStatus,
+                  s.barcode, s.external_product_id AS externalProductId,
+                  s.cainiao_code AS cainiaoCode, s.qianniu_code AS qianniuCode,
+                  s.jd_code AS jdCode, s.pdd_code AS pddCode
+           FROM order_items oi
+           LEFT JOIN skus s ON s.sku = oi.sku
+           WHERE oi.platform = @platform AND oi.order_id = @orderId
+           ORDER BY oi.id`
+        )
+    : null;
+  const recentUnmatchedItems = recentOrderKeys.length
+    ? db
+        .prepare(
+          `SELECT platform, order_id AS orderId, sub_order_id AS subOrderId,
+                  product_id AS productId, sku_text AS skuText, name,
+                  attributes, quantity, paid_amount AS paidAmount,
+                  status, refund_status AS refundStatus
+           FROM order_unmatched_items
+           WHERE platform = @platform AND order_id = @orderId
+           ORDER BY id`
+        )
+    : null;
+  const itemsByOrder = new Map();
+  const unmatchedByOrder = new Map();
+  for (const key of recentOrderKeys) {
+    const rows = recentOrderItems.all(key);
+    const unmatchedRows = recentUnmatchedItems.all(key);
+    itemsByOrder.set(`${key.platform}::${key.orderId}`, rows);
+    unmatchedByOrder.set(`${key.platform}::${key.orderId}`, unmatchedRows);
+  }
   const unmatchedItems = db
     .prepare(
       `SELECT platform, store, order_id AS orderId, sub_order_id AS subOrderId,
@@ -559,9 +646,40 @@ export function getOrdersOverview({ month = "", store = "" } = {}) {
     },
     statusRows,
     storeSummaryRows,
-    recentOrders,
+    recentOrders: recentOrders.map((row) => {
+      const items = itemsByOrder.get(`${row.platform}::${row.orderId}`) || [];
+      const unmatchedOrderItems = unmatchedByOrder.get(`${row.platform}::${row.orderId}`) || [];
+      const displayItems = [
+        ...items.map((item) => ({ ...item, rowType: "matched" })),
+        ...unmatchedOrderItems.map((item) => ({
+          ...item,
+          rowType: "unmatched",
+          sku: item.skuText || "",
+          barcode: item.productId || item.skuText || "",
+          externalProductId: item.productId || ""
+        }))
+      ];
+      return {
+        ...row,
+        items,
+        unmatchedOrderItems,
+        displayItems,
+        skuSummary: displayItems.map((item) => item.sku).filter(Boolean).join(" / "),
+        barcodeSummary: displayItems.map((item) => item.barcode || item.productId || item.sku).filter(Boolean).join(" / "),
+        productSummary: displayItems
+          .map((item) => `${item.name || item.sku}${Number(item.quantity || 0) ? ` x${formatReportNumber(item.quantity)}` : ""}`)
+          .join("；"),
+        refundSummary: [...new Set(displayItems.map((item) => item.refundStatus).filter(Boolean))].join(" / "),
+        itemAmount: displayItems.reduce((sum, item) => sum + Number(item.paidAmount || 0), 0)
+      };
+    }),
     unmatchedItems
   };
+}
+
+function formatReportNumber(value) {
+  const number = Number(value || 0);
+  return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(2)));
 }
 
 export function getMonthlySalesReport(month = currentMonth()) {
@@ -813,25 +931,127 @@ export function getBusinessOverview() {
   };
 }
 
-export function buildInventoryMarkdown() {
+const ALERT_LABEL_SHORT = {
+  critical: "🔴 不够卖 1 周",
+  urgent: "🟠 不够卖 2 周",
+  warning: "🟡 不够卖 1 月",
+  ok: "🟢 正常"
+};
+
+function buildInventoryList(items) {
+  return items
+    .slice(0, 30)
+    .map((item) => {
+      const sellableText =
+        item.sellableDays && item.sellableDays !== Infinity ? `，可售约 ${Math.round(item.sellableDays)} 天` : "";
+      const outboundText = item.monthlyOutbound
+        ? `，月出库 ${item.monthlyOutbound}，近30天销量 ${item.near30DaysSales}${sellableText}`
+        : "";
+      const label = ALERT_LABEL_SHORT[item.stockAlert.level] || item.stockAlert.text;
+      return `- **${item.sku}** ${item.name || ""}｜库存 ${item.totalQuantity}${outboundText} → ${label}`;
+    })
+    .join("\n");
+}
+
+function buildInventoryTable(items) {
+  // 4 列手机端刚好一屏，无需滑动
+  const header = "| SKU | 库存/销量 | 天数 | 预警 |\n|---|---|---|---|";
+  const rows = items
+    .slice(0, 30)
+    .map((item) => {
+      const days = item.sellableDays && item.sellableDays !== Infinity ? Math.round(item.sellableDays) : "—";
+      const label = ALERT_LABEL_SHORT[item.stockAlert.level] || "正常";
+      // 名称缩到 10 字，避免撑宽
+      const shortName = (item.name || "").replace(item.sku, "").trim().slice(0, 10);
+      const skuCell = shortName ? `${item.sku}<br>${shortName}` : item.sku;
+      const stockSales = `${item.totalQuantity} / ${item.near30DaysSales || 0}`;
+      return `| ${skuCell} | ${stockSales} | ${days} | ${label} |`;
+    })
+    .join("\n");
+  return [header, rows].join("\n");
+}
+
+function buildInventoryGrouped(items) {
+  const groups = { critical: [], urgent: [], warning: [] };
+  for (const item of items) {
+    if (groups[item.stockAlert.level]) groups[item.stockAlert.level].push(item);
+  }
+  const lines = [];
+  if (groups.critical.length) {
+    lines.push("**🔴 严重缺货（<7天）**");
+    lines.push(buildInventoryList(groups.critical));
+  }
+  if (groups.urgent.length) {
+    lines.push("\n**🟠 急需补货（7-14天）**");
+    lines.push(buildInventoryList(groups.urgent));
+  }
+  if (groups.warning.length) {
+    lines.push("\n**🟡 需要补货（15-30天）**");
+    lines.push(buildInventoryList(groups.warning));
+  }
+  return lines.join("\n");
+}
+
+function buildInventoryChart(items) {
+  // Unicode 文本柱状图，在钉钉 markdown 中直接显示
+  if (!items.length) return "暂无预警数据。";
+  const maxVal = Math.max(...items.map((i) => i.totalQuantity));
+  const maxBarLen = 12;
+  const lines = items.slice(0, 15).map((item) => {
+    const barLen = maxVal > 0 ? Math.round((item.totalQuantity / maxVal) * maxBarLen) : 0;
+    const bar = "█".repeat(barLen) + "░".repeat(maxBarLen - barLen);
+    const shortName = (item.name || item.sku).slice(0, 10);
+    const label = ALERT_LABEL_SHORT[item.stockAlert.level] || "";
+    return `${bar} ${item.totalQuantity.toString().padStart(3)} ${shortName} ${label}`;
+  });
+  return ["**库存量分布**", "```", ...lines, "```"].join("\n");
+}
+
+export function buildInventoryActionCard() {
+  const report = getInventoryReport();
+  const summary = [
+    `**📦 ERP库存预警 ${nowDate()}**`,
+    "",
+    `· SKU 总数：**${report.skuCount}**`,
+    `· 库存合计：**${report.totalQuantity}**`,
+    `· 需补货 SKU：**${report.lowStockItems.length}**`,
+    ""
+  ];
+
+  // 前 5 条预警精简展示
+  const top5 = report.lowStockItems.slice(0, 5).map((item) => {
+    const days = item.sellableDays && item.sellableDays !== Infinity ? `${Math.round(item.sellableDays)}天` : "—";
+    const label = ALERT_LABEL_SHORT[item.stockAlert.level] || "";
+    return `· ${item.sku}｜库存 ${item.totalQuantity}｜可售 ${days} → ${label}`;
+  });
+
+  const text = [...summary, ...top5].join("\n");
+
+  return {
+    title: `ERP库存预警 ${nowDate()}`,
+    text,
+    singleTitle: "📊 查看完整报表",
+    singleUrl: "http://localhost:3000"
+  };
+}
+
+export function buildInventoryMarkdown(format = "grouped") {
   const report = getInventoryReport();
   const lowStockText = report.lowStockItems.length
-    ? report.lowStockItems
-        .slice(0, 30)
-        .map((item) => `- ${item.sku} ${item.name || ""}：${item.totalQuantity} / 预警 ${item.lowStockThreshold}`)
-        .join("\n")
-    : "库存正常，暂无低库存 SKU。";
+    ? format === "table"
+      ? buildInventoryTable(report.lowStockItems)
+      : format === "grouped"
+      ? buildInventoryGrouped(report.lowStockItems)
+      : buildInventoryList(report.lowStockItems)
+    : "✅ 库存正常，暂无需要补货的 SKU。";
 
   return {
     title: `ERP库存预警 ${nowDate()}`,
     text: [
-      `## ERP库存预警 ${nowDate()}`,
+      `## 📦 ERP库存预警 ${nowDate()}`,
       "",
-      `- SKU 数：${report.skuCount}`,
-      `- 库存合计：${report.totalQuantity}`,
-      `- 低库存 SKU：${report.lowStockItems.length}`,
+      `SKU 数：**${report.skuCount}**｜库存合计：**${report.totalQuantity}**｜需补货：**${report.lowStockItems.length}**`,
       "",
-      "### 低库存明细",
       lowStockText
     ].join("\n")
   };

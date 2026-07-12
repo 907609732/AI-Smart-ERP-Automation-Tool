@@ -23,6 +23,7 @@
           <button data-module-tab="import">导入中心</button>
           <button data-module-tab="business">经营看板</button>
           <button data-module-tab="ops">采购售后</button>
+          <button data-module-tab="barcodes">条码打印</button>
           <button data-module-tab="competitor">同行分析</button>
         </div>
         <div class="top-status nav-status">
@@ -51,43 +52,48 @@
           </div>
 
           <div class="erp-table-wrap">
-            <table class="erp-table">
+            <table id="inventoryTable" class="erp-table resizable-table">
               <thead>
                 <tr>
-                  <th class="select-col"><input type="checkbox" /></th>
-                  <th class="seq-col">序号</th>
-                  <th class="image-col">图片</th>
-                  <th class="name-col">商品名称 / 商品编码 ↑</th>
-                  <th>总库存数 ⓘ ↑</th>
-                  <th>当前仓库存数</th>
-                  <th>成本价</th>
-                  <th>预警线</th>
-                  <th>订单占有数 ↑</th>
-                  <th class="trend-col">近30天销量趋势 ⓘ</th>
-                  <th>库存可售天数 ⓘ</th>
-                  <th>7天销量 ⓘ</th>
-                  <th>15天销量 ⓘ</th>
-                  <th>7天退货量 ⓘ ↑</th>
-                  <th>15天退货量 ⓘ</th>
-                  <th class="op-col">操作</th>
+                  <th class="select-col" data-inventory-col="select"><input type="checkbox" /></th>
+                  <th class="seq-col" data-inventory-col="seq">序号</th>
+                  <th class="image-col" data-inventory-col="image">图片</th>
+                  <th class="name-col" data-inventory-col="name">商品名称 / 商品编码</th>
+                  <th data-inventory-col="total">总库存数 ⓘ</th>
+                  <th data-inventory-col="warehouse">当前仓库存数</th>
+                  <th data-inventory-col="cost">成本价</th>
+                  <th data-inventory-col="low">预警线</th>
+                  <th data-inventory-col="reserved">订单占有数 ↑</th>
+                  <th class="trend-col" data-inventory-col="trend">近30天销量趋势 ⓘ</th>
+                  <th data-inventory-col="monthlyOutbound">菜鸟月出库量 ⓘ</th>
+                  <th data-inventory-col="sellable">库存可售天数 ⓘ</th>
+                  <th data-inventory-col="sales7">7天销量 ⓘ</th>
+                  <th data-inventory-col="sales15">15天销量 ⓘ</th>
+                  <th data-inventory-col="return7">7天退货量 ⓘ</th>
+                  <th data-inventory-col="return15">15天退货量 ⓘ</th>
+                  <th class="op-col" data-inventory-col="op">操作</th>
                 </tr>
               </thead>
               <tbody id="inventoryBody"></tbody>
               <tfoot>
                 <tr>
-                  <td colspan="4">小计</td>
-                  <td id="subtotalQuantity">0</td>
-                  <td id="subtotalWarehouseQuantity">0</td>
-                  <td></td>
-                  <td></td>
-                  <td id="subtotalReserved">0</td>
-                  <td></td>
-                  <td></td>
-                  <td id="subtotalSales7">0</td>
-                  <td id="subtotalSales15">0</td>
-                  <td id="subtotalReturn7">0</td>
-                  <td id="subtotalReturn15">0</td>
-                  <td></td>
+                  <td data-inventory-col="select"></td>
+                  <td data-inventory-col="seq"></td>
+                  <td data-inventory-col="image"></td>
+                  <td data-inventory-col="name">小计</td>
+                  <td id="subtotalQuantity" data-inventory-col="total">0</td>
+                  <td id="subtotalWarehouseQuantity" data-inventory-col="warehouse">0</td>
+                  <td data-inventory-col="cost"></td>
+                  <td data-inventory-col="low"></td>
+                  <td id="subtotalReserved" data-inventory-col="reserved">0</td>
+                  <td data-inventory-col="trend"></td>
+                  <td id="subtotalMonthlyOutbound" data-inventory-col="monthlyOutbound">0</td>
+                  <td data-inventory-col="sellable"></td>
+                  <td id="subtotalSales7" data-inventory-col="sales7">0</td>
+                  <td id="subtotalSales15" data-inventory-col="sales15">0</td>
+                  <td id="subtotalReturn7" data-inventory-col="return7">0</td>
+                  <td id="subtotalReturn15" data-inventory-col="return15">0</td>
+                  <td data-inventory-col="op"></td>
                 </tr>
               </tfoot>
             </table>
@@ -137,6 +143,10 @@
               <label>店铺 <select id="ordersStore"></select></label>
               <button id="ordersFilterReset">全部订单</button>
             </div>
+            <details class="column-settings">
+              <summary>自定义显示数据</summary>
+              <div id="orderColumnSettings" class="column-options"></div>
+            </details>
             <div id="orderMetrics" class="business-metrics order-metrics"></div>
             <div class="chart-grid order-grid">
               <div>
@@ -150,9 +160,7 @@
             </div>
             <h3 class="table-title">最近订单</h3>
             <table>
-              <thead>
-                <tr><th>平台</th><th>店铺</th><th>订单号</th><th>时间</th><th>状态</th><th>明细数</th><th>数量</th><th>金额</th></tr>
-              </thead>
+              <thead id="ordersHead"></thead>
               <tbody id="ordersBody"></tbody>
             </table>
           </div>
@@ -187,13 +195,13 @@
         <section class="drawer-grid">
           <div class="panel" data-module="import">
             <h2>导入中心</h2>
-            <form id="inventoryForm" class="import-form">
-              <h3>库存导入</h3>
-              <label>仓库 <select name="warehouseId" id="inventoryWarehouseForm"></select></label>
-              <label>盘点日期 <input name="snapshotDate" type="date" /></label>
-              <label>文件 <input name="file" type="file" accept=".xlsx,.xls,.csv,.tsv" required /></label>
-              <button>导入库存</button>
-            </form>
+
+            <div class="sync-card">
+              <h3>🚀 一键同步菜鸟库存</h3>
+              <p>自动抓取菜鸟云仓库存 → 导入系统 → 生成报告 → 推送钉钉</p>
+              <button id="syncCainiaoBtn" class="primary">立即同步</button>
+              <span id="syncCainiaoStatus" class="sync-status"></span>
+            </div>
 
             <form id="ordersForm" class="import-form">
               <h3>订单导入</h3>
@@ -290,6 +298,129 @@
         </section>
 
         <section class="drawer-grid">
+          <div class="panel barcode-panel" data-module="barcodes">
+            <div class="panel-head">
+              <div>
+                <h2>条码打印</h2>
+                <span class="panel-note">按“产品大类 / 产品 / 条形码”管理，自动从库存商品编码生成 Code128 条码。</span>
+              </div>
+              <div class="actions">
+                <button id="refreshBarcodeBtn">刷新条码</button>
+                <button id="saveBarcodeTemplateBtn">保存模板</button>
+                <button class="primary" id="printBarcodeBtn">打印标签</button>
+              </div>
+            </div>
+
+            <div class="barcode-layout">
+              <aside class="barcode-sidebar">
+                <label>产品大类 <select id="barcodeCategory"></select></label>
+                <label>搜索商品 <input id="barcodeSearch" placeholder="SKU、商品名、条形码" /></label>
+                <div id="barcodeTemplateInfo" class="barcode-template-info"></div>
+                <div id="barcodeList" class="barcode-list"></div>
+              </aside>
+
+              <section class="barcode-editor">
+                <div class="barcode-controls">
+                  <label>模板名称 <input id="barcodeName" /></label>
+                  <label>打印数量 <input id="barcodeQty" type="number" min="1" max="500" value="1" /></label>
+                  <label>标签尺寸
+                    <select id="barcodeSize">
+                      <option value="40x60">40 × 60 mm</option>
+                      <option value="50x30">50 × 30 mm 横版</option>
+                      <option value="30x20">30 × 20 mm 小标签</option>
+                    </select>
+                  </label>
+                  <label>打印机
+                    <select id="barcodePrinter">
+                      <option value="">读取打印机中...</option>
+                    </select>
+                  </label>
+                  <label>显示日期
+                    <select id="barcodeDateMode">
+                      <option value="datetime">日期 + 时间</option>
+                      <option value="date">只显示日期</option>
+                      <option value="none">不显示</option>
+                    </select>
+                  </label>
+                </div>
+                <div id="barcodePrintHint" class="barcode-print-hint"></div>
+
+                <div class="barcode-designer">
+                  <div class="barcode-toolbox" aria-label="条码编辑工具">
+                    <button data-add-barcode-element="text">文本</button>
+                    <button data-add-barcode-element="time">时间</button>
+                    <button data-add-barcode-element="barcode">条形码</button>
+                    <button data-add-barcode-element="qrcode">二维码</button>
+                    <button data-add-barcode-element="image">图片</button>
+                    <button data-add-barcode-element="rect">矩形</button>
+                    <button data-add-barcode-element="circle">圆形</button>
+                    <button data-add-barcode-element="line">线条</button>
+                    <span class="tool-separator"></span>
+                    <button id="barcodeDuplicateBtn">复制</button>
+                    <button id="barcodeDeleteBtn">删除</button>
+                    <button id="barcodeFrontBtn">上移</button>
+                    <button id="barcodeBackBtn">下移</button>
+                  </div>
+
+                  <div class="barcode-workspace">
+                    <div>
+                      <div class="canvas-title">
+                        <h3>标签画布</h3>
+                        <span id="barcodeCanvasSize">40 × 60 mm</span>
+                      </div>
+                      <div class="barcode-canvas-wrap">
+                        <svg id="barcodeCanvas" class="barcode-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+                      </div>
+                    </div>
+
+                    <aside class="barcode-properties">
+                      <h3>属性面板</h3>
+                      <label>对象类型 <input id="barcodeElementType" disabled /></label>
+                      <label>内容 / 变量
+                        <textarea id="barcodeElementText" rows="3" placeholder="{sku} {name} {barcode} {date} {datetime}"></textarea>
+                      </label>
+                      <div class="property-grid">
+                        <label>X(mm)<input id="barcodeElementX" type="number" step="0.5" /></label>
+                        <label>Y(mm)<input id="barcodeElementY" type="number" step="0.5" /></label>
+                        <label>宽(mm)<input id="barcodeElementW" type="number" step="0.5" /></label>
+                        <label>高(mm)<input id="barcodeElementH" type="number" step="0.5" /></label>
+                        <label>旋转<input id="barcodeElementRotate" type="number" step="1" /></label>
+                        <label>字号(mm)<input id="barcodeElementFontSize" type="number" step="0.2" /></label>
+                      </div>
+                      <div class="property-grid">
+                        <label>字重
+                          <select id="barcodeElementFontWeight">
+                            <option value="400">常规</option>
+                            <option value="700">加粗</option>
+                          </select>
+                        </label>
+                        <label>对齐
+                          <select id="barcodeElementAlign">
+                            <option value="start">左</option>
+                            <option value="center">中</option>
+                            <option value="end">右</option>
+                          </select>
+                        </label>
+                        <label>填充<input id="barcodeElementFill" type="color" /></label>
+                        <label>线色<input id="barcodeElementStroke" type="color" /></label>
+                        <label>线宽<input id="barcodeElementStrokeWidth" type="number" step="0.1" /></label>
+                      </div>
+                      <label>图片文件 <input id="barcodeElementImage" type="file" accept="image/*" /></label>
+                      <p class="panel-note">拖动画布对象可移动。变量示例：{sku}、{name}、{barcode}、{date}、{datetime}。</p>
+                    </aside>
+                  </div>
+
+                  <div>
+                    <h3>批量打印队列</h3>
+                    <div id="barcodePrintSheet" class="barcode-print-sheet"></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="drawer-grid">
           <div class="panel" data-module="competitor">
             <div class="panel-head">
               <h2>同行数据分析</h2>
@@ -350,6 +481,25 @@
       </main>
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <dialog id="imageManagerDialog" class="image-manager-dialog">
+      <div class="modal-head">
+        <div>
+          <h2 id="imageManagerTitle">商品图片</h2>
+          <p id="imageManagerSubtitle">查看、上传和切换商品图片</p>
+        </div>
+        <button id="closeImageManagerBtn" type="button">关闭</button>
+      </div>
+      <div class="image-manager-body">
+        <div class="image-main-preview" id="imageMainPreview"></div>
+        <aside class="image-manager-side">
+          <label class="image-bulk-uploader">
+            <span>上传多张图片</span>
+            <input id="imageManagerUpload" type="file" accept="image/*" multiple />
+          </label>
+          <div id="imageManagerList" class="image-manager-list"></div>
+        </aside>
+      </div>
+    </dialog>
 
     <script src="./app.js"></script>
   </body>

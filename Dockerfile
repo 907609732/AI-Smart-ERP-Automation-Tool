@@ -1,5 +1,6 @@
 ARG NODE_IMAGE=node:24-bookworm-slim
 FROM ${NODE_IMAGE}
+ARG APT_MIRROR=""
 
 WORKDIR /app
 
@@ -7,7 +8,10 @@ ENV NODE_ENV=production
 ENV ERP_PORT=3000
 
 # better-sqlite3 是原生模块，保留编译工具能让不同 CPU/Node 版本下安装更稳。
-RUN apt-get update \
+RUN if [ -n "$APT_MIRROR" ]; then \
+      sed -i "s|http://deb.debian.org/debian|$APT_MIRROR/debian|g; s|http://deb.debian.org/debian-security|$APT_MIRROR/debian-security|g" /etc/apt/sources.list.d/debian.sources; \
+    fi \
+  && apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 

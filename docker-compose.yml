@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
+        APT_MIRROR: ${APT_MIRROR:-}
     container_name: ai-smart-erp
     restart: unless-stopped
     env_file:

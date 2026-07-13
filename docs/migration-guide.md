@@ -56,7 +56,8 @@ docker compose -p ai-smart-erp ps
 2. 配置反向代理到 `http://127.0.0.1:3000`。
 3. 申请 SSL。
 4. 域名 DNS A 记录切到新服务器 IP。
-5. 确认访问正常后，再停止旧服务器。
+5. 在 Nginx HTTPS `server` 块恢复 `auth_basic` 和 `/etc/nginx/.htpasswd-erp`，确认未认证访问返回 `401`。
+6. 确认使用认证账号访问正常后，再停止旧服务器。
 
 ## 本地和云端双环境
 

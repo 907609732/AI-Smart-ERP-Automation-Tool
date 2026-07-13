@@ -111,6 +111,26 @@ http://127.0.0.1:3000
 
 然后在宝塔里申请 SSL 证书。安全组只需要对公网开放 `80`、`443`、必要时开放 `22`；不要把 `3000` 直接暴露到公网。
 
+## 私有访问认证
+
+生产 ERP 应在 Nginx 的 HTTPS `server` 块中启用 Basic Auth，保护页面和所有 API：
+
+```nginx
+auth_basic "ERP Private Access";
+auth_basic_user_file /etc/nginx/.htpasswd-erp;
+```
+
+密码文件只保存在服务器，不提交 Git。创建或更换 `erp-owner` 密码后，确保 Nginx 工作进程可读取：
+
+```bash
+printf 'erp-owner:%s\n' "$(openssl passwd -6 '替换为高强度密码')" | sudo tee /etc/nginx/.htpasswd-erp >/dev/null
+sudo chown root:www-data /etc/nginx/.htpasswd-erp
+sudo chmod 640 /etc/nginx/.htpasswd-erp
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+未认证请求应返回 `401`，正确账号密码才能访问 ERP。`scripts/sync-data-to-cloud.sh` 已将公网 `401` 视为认证正常，云端容器健康检查仍在服务器本机完成。
+
 ## 更新部署
 
 本地改完代码：

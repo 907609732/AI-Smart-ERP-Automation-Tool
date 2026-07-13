@@ -205,6 +205,10 @@ docker compose -p ai-smart-erp logs --tail=80 erp
 exit 1
 REMOTE
 
-echo "验证公网 HTTPS..."
-curl --noproxy '*' -fsS "$REMOTE_HEALTH_URL" >/dev/null
-echo "同步完成：$REMOTE_HEALTH_URL 正常。"
+echo "验证公网 HTTPS 访问保护..."
+public_status="$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' "$REMOTE_HEALTH_URL")"
+if [[ "$public_status" != "401" ]]; then
+  echo "公网 ERP 应要求认证，但实际返回 HTTP $public_status。" >&2
+  exit 1
+fi
+echo "同步完成：云端本机健康检查正常，公网 ERP 已启用访问认证。"

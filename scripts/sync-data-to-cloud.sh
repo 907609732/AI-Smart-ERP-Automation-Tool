@@ -152,7 +152,10 @@ fi
 if [[ -s "$REMOTE_STAGE/env.production.update" ]]; then
   echo "更新云端钉钉配置..."
   touch .env.production
-  cp .env.production ".env.production.bak.$(date +%Y%m%d-%H%M%S)"
+  env_backup_dir="$REMOTE_BACKUP_ROOT/env-production-backups"
+  mkdir -p "$env_backup_dir"
+  cp .env.production "$env_backup_dir/.env.production.$(date +%Y%m%d-%H%M%S)"
+  chmod 600 "$env_backup_dir"/.env.production.*
   python3 - "$REMOTE_STAGE/env.production.update" .env.production <<'PY'
 import sys
 from pathlib import Path

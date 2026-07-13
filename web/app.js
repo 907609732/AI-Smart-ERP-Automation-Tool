@@ -1,6 +1,7 @@
 // 全站单页应用共享状态。这里刻意保持扁平，方便其他智能体定位：
 // 配置/缓存数据放 state，DOM 展示由各 load/render 函数重新生成。
 const state = {
+  auth: { configured: false, authenticated: false, user: null },
   config: { warehouses: [], platforms: [], stores: [] },
   skus: [],
   competitorSku: "",
@@ -66,6 +67,7 @@ const ORDER_COLUMNS = [
 ];
 
 document.querySelector("#refreshBtn").addEventListener("click", refreshAll);
+document.querySelector("#authLogout").addEventListener("click", logoutDingtalk);
 document.querySelector("#inventoryWarehouse").addEventListener("change", loadInventory);
 document.querySelector("#sendInventoryBtn").addEventListener("click", () => sendDingTalk({ type: "inventory" }));
 document.querySelector("#sendMonthlyBtn").addEventListener("click", () =>
@@ -158,6 +160,7 @@ async function init() {
   document.querySelector("#businessMonth").value = todayMonth();
   initOrderColumns();
   initInventoryColumnResize();
+  await loadAuth();
   state.config = (await api("/api/config")).data;
   state.skus = (await api("/api/skus")).data;
   state.competitorSku = state.skus[0]?.sku || "";
@@ -172,6 +175,26 @@ async function init() {
   document.querySelector("#unpackCompleteBarcode").src = `${API_BASE}/api/unpack/complete-barcode.svg`;
   updateUnpackClock();
   await refreshAll();
+}
+
+async function loadAuth() {
+  const result = await api("/api/auth/me");
+  state.auth = result.data;
+  const user = state.auth.user;
+  document.querySelector("#authStatus").textContent = state.auth.authenticated ? (user.role === "admin" ? "拆包管理员" : "拆包操作员") : (state.auth.configured ? "拆包未登录" : "本地模式");
+  document.querySelector("#authUser").textContent = user?.name || "五成";
+  document.querySelector("#authLogin").hidden = !state.auth.configured || state.auth.authenticated;
+  document.querySelector("#authLogout").hidden = !state.auth.authenticated;
+  document.querySelector("#unpackOperator").value = user?.name || (state.auth.configured ? "请先钉钉登录" : "local");
+  document.querySelector("#unpackCompleteBtn").disabled = state.auth.configured && !state.auth.authenticated;
+  document.querySelector("#unpackScanForm button").disabled = state.auth.configured && !state.auth.authenticated;
+  document.querySelector("#unpackImportForm").hidden = state.auth.configured && user?.role !== "admin";
+  document.querySelector("#unpackCameraForm").hidden = state.auth.configured && user?.role !== "admin";
+}
+
+async function logoutDingtalk() {
+  await api("/api/auth/logout", { method: "POST" });
+  window.location.reload();
 }
 
 function showModule(moduleName) {
@@ -280,13 +303,12 @@ async function submitUnpackScan(event, forcedTrackingNo = "") {
   event?.preventDefault();
   const input = document.querySelector("#unpackScanInput");
   const trackingNo = forcedTrackingNo || input.value;
-  const operator = document.querySelector("#unpackOperator").value || "local";
   if (!trackingNo.trim()) return showUnpackMessage("请扫描或输入物流单号。");
   try {
     const result = await api("/api/unpack/scan", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ trackingNo, operator, source: forcedTrackingNo ? "complete_barcode" : "scanner" })
+      body: JSON.stringify({ trackingNo, source: forcedTrackingNo ? "complete_barcode" : "scanner" })
     });
     input.value = "";
     const session = result.data;
@@ -1749,7 +1771,12 @@ async function api(url, options = {}) {
   // 页面函数就可以只写成功路径，失败交给浏览器控制台和 toast 暴露。
   const response = await fetch(`${API_BASE}${url}`, options);
   const payload = await response.json();
-  if (!response.ok || payload.ok === false) throw new Error(payload.error || "请求失败");
+  if (!response.ok || payload.ok === false) {
+    const error = new Error(payload.error || "请求失败");
+    error.status = response.status;
+    error.loginUrl = payload.loginUrl || "";
+    throw error;
+  }
   return payload;
 }
 

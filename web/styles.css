@@ -125,6 +125,18 @@ p {
   backdrop-filter: blur(8px);
 }
 
+.auth-action {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--blue);
+  text-decoration: none;
+}
+
 .top-status strong {
   color: var(--text);
 }

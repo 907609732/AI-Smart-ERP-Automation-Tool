@@ -28,8 +28,10 @@
           <button data-module-tab="competitor">同行分析</button>
         </div>
         <div class="top-status nav-status">
-          <span>本地 ERP</span>
-          <strong>五成</strong>
+          <span id="authStatus">身份检查中</span>
+          <strong id="authUser">五成</strong>
+          <a id="authLogin" class="auth-action" href="/api/auth/dingtalk/start" hidden>钉钉登录</a>
+          <button id="authLogout" class="auth-action" type="button" hidden>退出</button>
         </div>
       </nav>
 
@@ -448,7 +450,7 @@
                   <input id="unpackScanInput" autocomplete="off" placeholder="扫码枪请直接扫描，或手工输入物流单号" />
                   <button class="primary">开始录制</button>
                 </form>
-                <label>操作员 <input id="unpackOperator" value="local" autocomplete="name" /></label>
+                <label>操作员 <input id="unpackOperator" value="尚未登录" autocomplete="name" readonly /></label>
                 <div class="unpack-actions">
                   <button id="unpackCompleteBtn" type="button">扫描完成条码</button>
                   <button id="mobileScanBtn" type="button">手机摄像头扫码</button>

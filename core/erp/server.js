@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, rootDir } from "../config.js";
 import { sendDingTalkMarkdown } from "../dingtalk.js";
 import { getDb } from "./db.js";
+import { createDingtalkAuthHandlers } from "./dingtalk-auth.js";
 import { archiveImportedFile, hashFile } from "./file-archive.js";
 import {
   createCompetitor,
@@ -72,6 +73,7 @@ fs.mkdirSync(productImageDir, { recursive: true });
 
 const upload = multer({ dest: uploadDir });
 const app = express();
+const dingtalkAuth = createDingtalkAuthHandlers();
 
 // server.js 只做“HTTP 编排”：收请求、处理上传、调用业务模块、统一返回。
 // 具体业务规则尽量放在 importers/reports/order-matching 等模块，避免路由膨胀。
@@ -84,6 +86,10 @@ app.use((req, res, next) => {
   if (req.method === "OPTIONS") return res.sendStatus(204);
   return next();
 });
+app.get("/api/auth/me", dingtalkAuth.me);
+app.get("/api/auth/dingtalk/start", dingtalkAuth.start);
+app.get("/api/auth/dingtalk/callback", dingtalkAuth.callback);
+app.post("/api/auth/logout", dingtalkAuth.logout);
 app.use(express.static(publicDir));
 app.use("/product-images", express.static(productImageDir));
 
@@ -209,7 +215,7 @@ app.post("/api/import/shipping-fees", upload.single("file"), (req, res) =>
   })
 );
 
-app.post("/api/unpack/import-returns", upload.single("file"), (req, res) =>
+app.post("/api/unpack/import-returns", dingtalkAuth.requireAdmin, upload.single("file"), (req, res) =>
   sendJson(res, () => {
     const uploadInfo = prepareUploadedFile(req);
     const result = importUnpackReturnWorkbook(uploadInfo.importPath, uploadInfo.originalName);
@@ -306,10 +312,10 @@ app.get("/api/unpack/sessions", (req, res) =>
   sendJson(res, () => listUnpackSessions({ status: String(req.query.status || ""), keyword: String(req.query.keyword || "") }))
 );
 app.get("/api/unpack/sessions/:id", (req, res) => sendJson(res, () => getUnpackSession(req.params.id)));
-app.post("/api/unpack/scan", async (req, res) => {
+app.post("/api/unpack/scan", dingtalkAuth.requireUser, async (req, res) => {
   try {
     const trackingNo = String(req.body?.trackingNo || "");
-    const operator = String(req.body?.operator || process.env.UNPACK_DEFAULT_OPERATOR || "local");
+    const operator = `${req.authUser.name} (${req.authUser.userId})`;
     const source = String(req.body?.source || "scanner");
     const session = trackingNo.trim().toUpperCase() === UNPACK_COMPLETE_BARCODE
       ? completeUnpackSession({ operator })
@@ -321,7 +327,7 @@ app.post("/api/unpack/scan", async (req, res) => {
     res.status(400).json({ ok: false, error: error.message });
   }
 });
-app.get("/api/unpack/export.csv", (_req, res) => {
+app.get("/api/unpack/export.csv", dingtalkAuth.requireUser, (_req, res) => {
   res.setHeader("content-type", "text/csv; charset=utf-8");
   res.setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent("拆包扫码记录.csv")}`);
   res.send(exportUnpackCsv());
@@ -335,7 +341,7 @@ app.get("/api/unpack/complete-barcode.svg", (_req, res) => {
   }
 });
 app.get("/api/unpack/cameras", (_req, res) => sendJson(res, () => listUnpackCameras()));
-app.post("/api/unpack/cameras", (req, res) => sendJson(res, () => saveUnpackCamera(req.body || {})));
+app.post("/api/unpack/cameras", dingtalkAuth.requireAdmin, (req, res) => sendJson(res, () => saveUnpackCamera(req.body || {})));
 app.post("/api/unpack/nas/video-clips", (req, res) => {
   try {
     verifyNasSignature({

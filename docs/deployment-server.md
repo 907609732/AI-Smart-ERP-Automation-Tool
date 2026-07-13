@@ -131,6 +131,18 @@ sudo nginx -t && sudo systemctl reload nginx
 
 未认证请求应返回 `401`，正确账号密码才能访问 ERP。`scripts/sync-data-to-cloud.sh` 已将公网 `401` 视为认证正常，云端容器健康检查仍在服务器本机完成。
 
+为减少在线猜密码风险，再启用两层保护：
+
+1. 在 `/etc/nginx/conf.d/erp-rate-limit.conf` 定义 `limit_req_zone $binary_remote_addr zone=erp_per_ip:10m rate=10r/s;`，并在 ERP 的 Nginx `server` 块启用 `limit_req zone=erp_per_ip burst=30 nodelay;` 和 `limit_req_status 429;`。
+2. 安装 Fail2ban，使用 `nginx-http-auth` 过滤器监测 `/var/log/nginx/error.log`。建议 `8` 次失败 / `10` 分钟后封禁 IP `4` 小时，封禁范围只限定网站 `80/443`，不要误伤 SSH 或宝塔端口。
+
+检查：
+
+```bash
+sudo fail2ban-client status erp-nginx-basic-auth
+sudo nginx -t
+```
+
 ## 更新部署
 
 本地改完代码：

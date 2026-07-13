@@ -1,7 +1,8 @@
 ARG NODE_IMAGE=docker.m.daocloud.io/library/node:24-bookworm-slim
 FROM ${NODE_IMAGE}
 
-RUN apt-get update \
+RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g; s|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources \
+  && apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "unpack-main",
+    "name": "拆包主机位",
+    "type": "hikvision_rtsp",
+    "source": "rtsp://username:password@192.168.1.20:554/Streaming/Channels/101",
+    "enabled": true
+  },
+  {
+    "id": "unpack-usb-nas",
+    "name": "NAS USB 辅助机位",
+    "type": "nas_usb",
+    "source": "/dev/video0",
+    "enabled": false
+  }
+]

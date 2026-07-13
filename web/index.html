@@ -24,6 +24,7 @@
           <button data-module-tab="business">经营看板</button>
           <button data-module-tab="ops">采购售后</button>
           <button data-module-tab="barcodes">条码打印</button>
+          <button data-module-tab="unpack">拆包取证</button>
           <button data-module-tab="competitor">同行分析</button>
         </div>
         <div class="top-status nav-status">
@@ -417,6 +418,76 @@
                 </div>
               </section>
             </div>
+          </div>
+        </section>
+
+        <section class="drawer-grid">
+          <div class="panel unpack-panel" data-module="unpack">
+            <div class="panel-head">
+              <div>
+                <h2>快递拆包工作台</h2>
+                <span class="panel-note">扫物流单号开始录制，扫完成条码结束本单录像。</span>
+              </div>
+              <div class="unpack-clock" id="unpackClock">中国时间 --:--:--</div>
+            </div>
+
+            <div class="unpack-status-grid" id="unpackMetrics"></div>
+            <div id="unpackActiveCard" class="unpack-active idle">
+              <div>
+                <span class="unpack-state">等待扫码</span>
+                <strong id="unpackTracking">请扫描快递物流单号</strong>
+                <small id="unpackMatch">扫码后将自动匹配退货订单并通知 NAS 开始取证。</small>
+              </div>
+              <div class="unpack-active-meta" id="unpackActiveMeta"></div>
+            </div>
+
+            <div class="unpack-layout">
+              <section class="unpack-scan-zone">
+                <h3>扫码录入</h3>
+                <form id="unpackScanForm" class="unpack-scan-form">
+                  <input id="unpackScanInput" autocomplete="off" placeholder="扫码枪请直接扫描，或手工输入物流单号" />
+                  <button class="primary">开始录制</button>
+                </form>
+                <label>操作员 <input id="unpackOperator" value="local" autocomplete="name" /></label>
+                <div class="unpack-actions">
+                  <button id="unpackCompleteBtn" type="button">扫描完成条码</button>
+                  <button id="mobileScanBtn" type="button">手机摄像头扫码</button>
+                  <a class="button-link" id="unpackExportBtn" href="/api/unpack/export.csv">导出记录</a>
+                </div>
+                <div class="complete-barcode">
+                  <img id="unpackCompleteBarcode" alt="完成录制条码 UNPACK_COMPLETE" />
+                  <span>完成录制条码</span>
+                </div>
+                <p id="unpackMessage" class="message"></p>
+              </section>
+              <section class="unpack-camera-zone">
+                <h3>手机扫码</h3>
+                <video id="mobileScanVideo" playsinline muted hidden></video>
+                <p id="mobileScanHint" class="empty">用手机打开本页后点击“手机摄像头扫码”。固定摄像头录像由 NAS 服务处理。</p>
+                <div id="unpackCameraList" class="camera-list"></div>
+              </section>
+            </div>
+
+            <div class="unpack-admin-grid">
+              <form id="unpackImportForm" class="import-form compact">
+                <h3>导入退货匹配表</h3>
+                <label>Excel <input name="file" type="file" accept=".xlsx,.xls" required /></label>
+                <button>导入并统一匹配</button>
+              </form>
+              <form id="unpackCameraForm" class="import-form compact">
+                <h3>登记取证摄像头</h3>
+                <label>名称 <input name="name" required placeholder="拆包主机位" /></label>
+                <label>类型 <select name="cameraType"><option value="hikvision_rtsp">海康/RTSP</option><option value="nas_usb">NAS USB</option><option value="workstation_usb">电脑 USB</option></select></label>
+                <label>NAS 内部来源标识 <input name="streamRef" placeholder="rtsp 配置名或 /dev/video0" /></label>
+                <button>保存摄像头</button>
+              </form>
+            </div>
+
+            <h3 class="table-title">最近拆包记录</h3>
+            <div class="erp-table-wrap"><table>
+              <thead><tr><th>物流单号</th><th>状态</th><th>匹配</th><th>订单/商品</th><th>开始</th><th>时长</th><th>操作员</th><th>视频</th></tr></thead>
+              <tbody id="unpackSessionsBody"></tbody>
+            </table></div>
           </div>
         </section>
 

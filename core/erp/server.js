@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import express from "express";
 import multer from "multer";
@@ -46,6 +47,21 @@ import {
   renderBarcodeSvg,
   saveBarcodeTemplate
 } from "./barcodes.js";
+import {
+  UNPACK_COMPLETE_BARCODE,
+  completeUnpackSession,
+  createNasCommand,
+  exportUnpackCsv,
+  getUnpackOverview,
+  getUnpackSession,
+  importUnpackReturnWorkbook,
+  listUnpackCameras,
+  listUnpackSessions,
+  registerNasVideoClip,
+  saveUnpackCamera,
+  startUnpackSession,
+  verifyNasSignature
+} from "./unpack.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(rootDir, "web");
@@ -59,7 +75,7 @@ const app = express();
 
 // server.js 只做“HTTP 编排”：收请求、处理上传、调用业务模块、统一返回。
 // 具体业务规则尽量放在 importers/reports/order-matching 等模块，避免路由膨胀。
-app.use(express.json());
+app.use(express.json({ verify: (req, _res, buffer) => { req.rawBody = buffer.toString("utf8"); } }));
 app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -193,6 +209,20 @@ app.post("/api/import/shipping-fees", upload.single("file"), (req, res) =>
   })
 );
 
+app.post("/api/unpack/import-returns", upload.single("file"), (req, res) =>
+  sendJson(res, () => {
+    const uploadInfo = prepareUploadedFile(req);
+    const result = importUnpackReturnWorkbook(uploadInfo.importPath, uploadInfo.originalName);
+    return withStoredImportFile(uploadInfo, {
+      result: { ...result, successCount: result.imported, rowCount: result.imported },
+      importType: "unpack_returns",
+      platform: "",
+      store: "",
+      rowCount: result.imported
+    });
+  })
+);
+
 app.get("/api/import/files", (_req, res) =>
   sendJson(res, () =>
     getDb()
@@ -271,6 +301,54 @@ app.get("/api/barcodes/code128.svg", (req, res) => {
   }
 });
 
+app.get("/api/unpack/overview", (_req, res) => sendJson(res, () => getUnpackOverview()));
+app.get("/api/unpack/sessions", (req, res) =>
+  sendJson(res, () => listUnpackSessions({ status: String(req.query.status || ""), keyword: String(req.query.keyword || "") }))
+);
+app.get("/api/unpack/sessions/:id", (req, res) => sendJson(res, () => getUnpackSession(req.params.id)));
+app.post("/api/unpack/scan", async (req, res) => {
+  try {
+    const trackingNo = String(req.body?.trackingNo || "");
+    const operator = String(req.body?.operator || process.env.UNPACK_DEFAULT_OPERATOR || "local");
+    const source = String(req.body?.source || "scanner");
+    const session = trackingNo.trim().toUpperCase() === UNPACK_COMPLETE_BARCODE
+      ? completeUnpackSession({ operator })
+      : startUnpackSession({ trackingNo, operator, scanSource: source });
+    const command = createNasCommand(session.id, session.status === "recording" ? "start" : "complete");
+    await dispatchNasCommand(command);
+    res.json({ ok: true, data: { ...getUnpackSession(session.id), completeBarcode: UNPACK_COMPLETE_BARCODE } });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error.message });
+  }
+});
+app.get("/api/unpack/export.csv", (_req, res) => {
+  res.setHeader("content-type", "text/csv; charset=utf-8");
+  res.setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent("拆包扫码记录.csv")}`);
+  res.send(exportUnpackCsv());
+});
+app.get("/api/unpack/complete-barcode.svg", (_req, res) => {
+  try {
+    res.setHeader("content-type", "image/svg+xml; charset=utf-8");
+    res.send(renderBarcodeSvg({ value: UNPACK_COMPLETE_BARCODE, height: 22, includetext: true, type: "code128" }));
+  } catch (error) {
+    res.status(500).send(error.message);
+  }
+});
+app.get("/api/unpack/cameras", (_req, res) => sendJson(res, () => listUnpackCameras()));
+app.post("/api/unpack/cameras", (req, res) => sendJson(res, () => saveUnpackCamera(req.body || {})));
+app.post("/api/unpack/nas/video-clips", (req, res) => {
+  try {
+    verifyNasSignature({
+      timestamp: req.header("x-unpack-timestamp"),
+      signature: req.header("x-unpack-signature"),
+      rawBody: req.rawBody || JSON.stringify(req.body || {})
+    });
+    res.json({ ok: true, data: registerNasVideoClip(req.body || {}) });
+  } catch (error) {
+    res.status(401).json({ ok: false, error: error.message });
+  }
+});
+
 app.post("/api/dingtalk/send-report", async (req, res) => {
   try {
     const type = req.body.type || "inventory";
@@ -332,6 +410,31 @@ function sendJson(res, fn) {
     res.json({ ok: true, data: fn() });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function dispatchNasCommand(command) {
+  const url = process.env.VIDEO_NAS_COMMAND_URL || "";
+  const secret = process.env.UNPACK_NAS_SHARED_SECRET || "";
+  const db = getDb();
+  if (!url || !secret) {
+    db.prepare("UPDATE unpack_nas_commands SET status = 'not_configured', error = 'NAS command URL or shared secret is missing' WHERE id = ?").run(command.id);
+    return;
+  }
+  const timestamp = String(Date.now());
+  const body = JSON.stringify({ id: command.id, sessionId: command.sessionId, commandType: command.commandType, payload: JSON.parse(command.payload) });
+  const signature = crypto.createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-unpack-timestamp": timestamp, "x-unpack-signature": signature },
+      body,
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!response.ok) throw new Error(`NAS returned HTTP ${response.status}`);
+    db.prepare("UPDATE unpack_nas_commands SET status = 'sent', completed_at = CURRENT_TIMESTAMP WHERE id = ?").run(command.id);
+  } catch (error) {
+    db.prepare("UPDATE unpack_nas_commands SET status = 'failed', error = ? WHERE id = ?").run(error.message, command.id);
   }
 }
 

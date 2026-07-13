@@ -19,3 +19,6 @@ tests/.auth/
 cloaked.conf
 hidden_changes.conf
 ignore.conf
+nas-video-service/.env
+nas-video-service/data/
+nas-video-service/config/cameras.json

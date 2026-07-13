@@ -10,6 +10,7 @@ const state = {
   barcodeElementId: "",
   barcodeDrag: null,
   barcodePrinters: { printers: [], defaultPrinter: "" },
+  unpack: { overview: null, sessions: [], cameras: [], mobileStream: null, mobileTimer: null },
   orderColumns: [],
   imageManager: { sku: "", name: "", images: [], index: 0 },
   inventorySort: { column: "", direction: "desc" }
@@ -113,6 +114,10 @@ document.querySelector("#competitorSkuSelect").addEventListener("change", () => 
 document.querySelector("#quickInventoryFile").addEventListener("change", quickImportInventory);
 document.querySelector("#exportInventoryBtn").addEventListener("click", exportInventoryCsv);
 document.querySelector("#rematchOrdersBtn").addEventListener("click", rematchUnmatchedOrders);
+document.querySelector("#unpackScanForm").addEventListener("submit", submitUnpackScan);
+document.querySelector("#unpackCompleteBtn").addEventListener("click", () => submitUnpackScan(undefined, "UNPACK_COMPLETE"));
+document.querySelector("#mobileScanBtn").addEventListener("click", startMobileScan);
+document.querySelector("#unpackCameraForm").addEventListener("submit", saveUnpackCamera);
 document.querySelector("#ordersMonth").addEventListener("change", loadOrdersOverview);
 document.querySelector("#ordersStore").addEventListener("change", loadOrdersOverview);
 document.querySelector("#ordersFilterReset").addEventListener("click", () => {
@@ -128,6 +133,7 @@ document.querySelectorAll("[data-module-tab]").forEach((button) => {
 
 bindImportForm("#ordersForm", "/api/import/orders");
 bindImportForm("#shippingForm", "/api/import/shipping-fees");
+bindImportForm("#unpackImportForm", "/api/unpack/import-returns");
 
 document.querySelector("#syncCainiaoBtn").addEventListener("click", async () => {
   const btn = document.querySelector("#syncCainiaoBtn");
@@ -146,6 +152,7 @@ document.querySelector("#syncCainiaoBtn").addEventListener("click", async () => 
 document.querySelector("#competitorForm").addEventListener("submit", createCompetitor);
 
 init();
+window.setInterval(updateUnpackClock, 1000);
 
 async function init() {
   document.querySelector("#businessMonth").value = todayMonth();
@@ -162,6 +169,8 @@ async function init() {
   fillStoreInputs(state.config.stores || []);
   fillCompetitorSkuSelect();
   showModule("inventory");
+  document.querySelector("#unpackCompleteBarcode").src = `${API_BASE}/api/unpack/complete-barcode.svg`;
+  updateUnpackClock();
   await refreshAll();
 }
 
@@ -187,11 +196,13 @@ function showModule(moduleName) {
     business: ["经营看板", "销售、采购、售后自动可视化"],
     ops: ["采购售后", "采购记录和售后退货明细"],
     barcodes: ["条码打印", "按产品大类和 SKU 编码生成打印标签"],
+    unpack: ["拆包取证", "扫码开始与完成条码控制录像会话"],
     competitor: ["同行分析", "维护同行链接和公开数据快照"]
   };
   const [title, subtitle] = titles[moduleName] || titles.inventory;
   document.querySelector(".page-title h1").textContent = title;
   document.querySelector(".page-title p").textContent = subtitle;
+  if (moduleName === "unpack") window.setTimeout(() => document.querySelector("#unpackScanInput")?.focus(), 0);
 }
 
 async function refreshAll() {
@@ -211,8 +222,156 @@ async function refreshAll() {
     loadSavedFiles(),
     loadBarcodeCatalog(),
     loadBarcodePrinters(),
-    loadCompetitors()
+    loadCompetitors(),
+    loadUnpackWorkbench()
   ]);
+}
+
+async function loadUnpackWorkbench() {
+  const [overviewResult, sessionsResult, camerasResult] = await Promise.all([
+    api("/api/unpack/overview"),
+    api("/api/unpack/sessions"),
+    api("/api/unpack/cameras")
+  ]);
+  state.unpack.overview = overviewResult.data;
+  state.unpack.sessions = sessionsResult.data;
+  state.unpack.cameras = camerasResult.data;
+  renderUnpackWorkbench();
+}
+
+function renderUnpackWorkbench() {
+  const overview = state.unpack.overview || { summary: {}, activeSession: null };
+  const summary = overview.summary || {};
+  document.querySelector("#unpackMetrics").innerHTML = [
+    businessMetric("今日拆包", formatNumber(summary.today), "中国时区"),
+    businessMetric("录制中", formatNumber(summary.recording), "当前会话"),
+    businessMetric("未匹配", formatNumber(summary.unmatched), "需要管理员处理"),
+    businessMetric("退货来源", formatNumber(summary.sources), "Excel 已导入记录")
+  ].join("");
+  const active = overview.activeSession;
+  const card = document.querySelector("#unpackActiveCard");
+  card.classList.toggle("recording", Boolean(active));
+  card.classList.toggle("idle", !active);
+  document.querySelector("#unpackTracking").textContent = active ? active.trackingNo : "请扫描快递物流单号";
+  document.querySelector("#unpackMatch").textContent = active
+    ? `${unpackStatus(active.matchStatus)} · ${active.productName || active.orderId || "等待 NAS 视频回传"}`
+    : "扫码后将自动匹配退货订单并通知 NAS 开始取证。";
+  document.querySelector("#unpackActiveMeta").innerHTML = active
+    ? `<span>开始 ${escapeHtml(active.startedAt)}</span><span>${escapeHtml(active.operator)}</span>`
+    : "";
+  document.querySelector("#unpackCameraList").innerHTML = state.unpack.cameras.length
+    ? state.unpack.cameras.map((camera) => `<div class="camera-row"><span class="camera-dot ${camera.status === "online" ? "online" : ""}"></span><strong>${escapeHtml(camera.name)}</strong><small>${escapeHtml(camera.cameraType)}</small><em>${camera.enabled ? "启用" : "停用"}</em></div>`).join("")
+    : '<p class="empty">尚未登记取证摄像头。管理员可在下方添加海康 RTSP、NAS USB 或电脑 USB 来源。</p>';
+  document.querySelector("#unpackSessionsBody").innerHTML = state.unpack.sessions.length
+    ? state.unpack.sessions.map((session) => `<tr>
+        <td class="nowrap-cell">${escapeHtml(session.trackingNo)}</td>
+        <td>${escapeHtml(unpackStatus(session.status))}</td>
+        <td>${escapeHtml(unpackStatus(session.matchStatus))}</td>
+        <td>${escapeHtml(session.productName || session.orderId || "-")}</td>
+        <td>${escapeHtml(session.startedAt)}</td>
+        <td>${escapeHtml(formatDuration(session.durationSeconds))}</td>
+        <td>${escapeHtml(session.operator)}</td>
+        <td>${escapeHtml(session.videoStatus)}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="8" class="empty-table">暂无拆包记录。</td></tr>';
+}
+
+async function submitUnpackScan(event, forcedTrackingNo = "") {
+  event?.preventDefault();
+  const input = document.querySelector("#unpackScanInput");
+  const trackingNo = forcedTrackingNo || input.value;
+  const operator = document.querySelector("#unpackOperator").value || "local";
+  if (!trackingNo.trim()) return showUnpackMessage("请扫描或输入物流单号。");
+  try {
+    const result = await api("/api/unpack/scan", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ trackingNo, operator, source: forcedTrackingNo ? "complete_barcode" : "scanner" })
+    });
+    input.value = "";
+    const session = result.data;
+    showUnpackMessage(session.status === "recording" ? `已开始录制：${session.trackingNo}` : `录制已完成：${session.trackingNo}`);
+    await loadUnpackWorkbench();
+  } catch (error) {
+    showUnpackMessage(error.message, true);
+  } finally {
+    input.focus();
+  }
+}
+
+async function saveUnpackCamera(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = Object.fromEntries(new FormData(form));
+  try {
+    await api("/api/unpack/cameras", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(data) });
+    form.reset();
+    showUnpackMessage("摄像头已登记，NAS 视频服务配置相同来源后即可取证。");
+    await loadUnpackWorkbench();
+  } catch (error) {
+    showUnpackMessage(error.message, true);
+  }
+}
+
+async function startMobileScan() {
+  if (!window.BarcodeDetector) return showUnpackMessage("当前浏览器不支持摄像头条码识别，请使用 Chrome/Edge 或扫码枪。", true);
+  if (state.unpack.mobileStream) return;
+  try {
+    const video = document.querySelector("#mobileScanVideo");
+    state.unpack.mobileStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+    video.srcObject = state.unpack.mobileStream;
+    video.hidden = false;
+    await video.play();
+    document.querySelector("#mobileScanHint").textContent = "正在识别物流条码，请将条码放入画面中央。";
+    const detector = new BarcodeDetector({ formats: ["code_128", "code_39", "ean_13", "ean_8", "itf"] });
+    const scan = async () => {
+      if (!state.unpack.mobileStream) return;
+      const codes = await detector.detect(video).catch(() => []);
+      if (codes[0]?.rawValue) {
+        document.querySelector("#unpackScanInput").value = codes[0].rawValue;
+        stopMobileScan();
+        await submitUnpackScan();
+        return;
+      }
+      state.unpack.mobileTimer = window.setTimeout(scan, 180);
+    };
+    scan();
+  } catch (error) {
+    showUnpackMessage(`无法打开手机摄像头：${error.message}`, true);
+  }
+}
+
+function stopMobileScan() {
+  window.clearTimeout(state.unpack.mobileTimer);
+  state.unpack.mobileStream?.getTracks().forEach((track) => track.stop());
+  state.unpack.mobileStream = null;
+  const video = document.querySelector("#mobileScanVideo");
+  video.pause();
+  video.srcObject = null;
+  video.hidden = true;
+  document.querySelector("#mobileScanHint").textContent = "手机扫码已完成，可继续使用扫码枪或手工输入。";
+}
+
+function updateUnpackClock() {
+  const target = document.querySelector("#unpackClock");
+  if (!target) return;
+  target.textContent = `中国时间 ${new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date())}`;
+}
+
+function showUnpackMessage(message, isError = false) {
+  const target = document.querySelector("#unpackMessage");
+  target.textContent = message;
+  target.classList.toggle("danger", isError);
+  showMessage(message);
+}
+
+function unpackStatus(value) {
+  return ({ recording: "录制中", completed: "已完成", matched: "已匹配", unmatched: "未匹配", ambiguous: "多个候选", pending: "待生成", processing: "处理中", ready: "已就绪" })[value] || value || "-";
+}
+
+function formatDuration(seconds) {
+  const value = Math.max(0, Number(seconds) || 0);
+  return `${Math.floor(value / 60)}分${String(value % 60).padStart(2, "0")}秒`;
 }
 
 async function loadDashboard() {

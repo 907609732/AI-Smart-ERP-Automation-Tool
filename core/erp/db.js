@@ -3,7 +3,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { rootDir } from "../config.js";
 
-const dataDir = path.join(rootDir, "data");
+const dataDir = process.env.ERP_DATA_DIR || path.join(rootDir, "data");
 const dbPath = path.join(dataDir, "erp.sqlite");
 
 let db;
@@ -313,6 +313,80 @@ function migrate(database) {
       PRIMARY KEY (sku, warehouse_id, month),
       FOREIGN KEY (sku) REFERENCES skus(sku) ON DELETE CASCADE,
       FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS unpack_return_sources (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tracking_no TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT '',
+      store TEXT NOT NULL DEFAULT '',
+      order_id TEXT NOT NULL DEFAULT '',
+      refund_id TEXT NOT NULL DEFAULT '',
+      product_name TEXT NOT NULL DEFAULT '',
+      return_status TEXT NOT NULL DEFAULT '',
+      apply_time TEXT NOT NULL DEFAULT '',
+      source_sheet TEXT NOT NULL DEFAULT '',
+      source_file TEXT NOT NULL DEFAULT '',
+      imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (tracking_no, platform, store, order_id, refund_id, product_name, source_sheet)
+    );
+
+    CREATE TABLE IF NOT EXISTS unpack_sessions (
+      id TEXT PRIMARY KEY,
+      tracking_no TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'recording',
+      match_status TEXT NOT NULL DEFAULT 'unmatched',
+      return_source_id INTEGER,
+      operator TEXT NOT NULL DEFAULT 'local',
+      scan_source TEXT NOT NULL DEFAULT 'scanner',
+      started_at TEXT NOT NULL,
+      ended_at TEXT NOT NULL DEFAULT '',
+      duration_seconds INTEGER NOT NULL DEFAULT 0,
+      video_status TEXT NOT NULL DEFAULT 'pending',
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (return_source_id) REFERENCES unpack_return_sources(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS unpack_video_clips (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      clip_type TEXT NOT NULL,
+      camera_id TEXT NOT NULL DEFAULT '',
+      video_ref TEXT NOT NULL DEFAULT '',
+      started_at TEXT NOT NULL DEFAULT '',
+      ended_at TEXT NOT NULL DEFAULT '',
+      checksum TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      expires_at TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (session_id, clip_type, camera_id),
+      FOREIGN KEY (session_id) REFERENCES unpack_sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS unpack_cameras (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      camera_type TEXT NOT NULL,
+      stream_ref TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'unknown',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS unpack_nas_commands (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      command_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending',
+      error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (session_id) REFERENCES unpack_sessions(id) ON DELETE CASCADE
     );
   `);
 

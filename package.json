@@ -22,7 +22,8 @@
     "inventory:export": "node core/playwright-inventory-export.js",
     "sync:inventory:full": "node core/sync-cainiao-inventory.js",
     "sync:inventory:cloud": "bash scripts/collect-and-sync-to-cloud.sh",
-    "monthly:report": "node core/monthly-report.js"
+    "monthly:report": "node core/monthly-report.js",
+    "test:unpack": "node --test tests/unpack-flow.test.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",

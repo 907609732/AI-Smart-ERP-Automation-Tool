@@ -21,6 +21,7 @@
     "test:verify": "node core/playwright-verify.js",
     "inventory:export": "node core/playwright-inventory-export.js",
     "sync:inventory:full": "node core/sync-cainiao-inventory.js",
+    "sync:inventory:cloud": "bash scripts/collect-and-sync-to-cloud.sh",
     "monthly:report": "node core/monthly-report.js"
   },
   "dependencies": {

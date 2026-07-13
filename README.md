@@ -20,6 +20,7 @@ http://localhost:3000
 ```bash
 npm run erp              # 启动本地 ERP
 npm run run:headed       # 打开浏览器执行菜鸟库存下载、整理、钉钉发送
+npm run sync:inventory:cloud # 采集菜鸟库存、发送钉钉并同步云端 ERP
 npm run manual-login     # 单独打开登录窗口，处理验证码/滑块/短信
 npm run test:process     # 只处理最近下载的库存文件
 npm run pdd:login        # 打开拼多多手机模式登录窗口，保存独立登录态
@@ -104,7 +105,7 @@ cp config/launchd/com.cainiao.inventory.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.cainiao.inventory.plist
 ```
 
-修改运行时间时，编辑模板里的 `Hour` 和 `Minute`。当前模板默认每天 22:00。
+定时任务以中国时间每天 `22:00` 为准。当前 Mac 使用美国东部时区，模板会在本机 `09:00` 和 `10:00` 检查，并只在中国时间恰好为 `22:00` 时执行，因此可跨夏令时运行。
 
 查看日志：
 

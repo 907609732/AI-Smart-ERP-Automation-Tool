@@ -9,6 +9,18 @@ import { sendDingTalkMarkdown } from './dingtalk.js';
 const authFile = path.join(process.cwd(), 'tests', '.auth', 'cainiao.json');
 const targetUrl = 'https://b.cainiao.com/business/dsc/oms/inventory/inventoryreport';
 const downloadDir = path.join(process.cwd(), 'downloads');
+const businessTimeZone = process.env.BUSINESS_TIME_ZONE || 'Asia/Shanghai';
+
+function businessDate() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: businessTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
 
 function copyDirSync(src, dest) {
   if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
@@ -85,8 +97,7 @@ async function exportFromCainiao() {
   }
 
   // 设置日期为当天
-  const targetDate = new Date();
-  const dateStr = targetDate.toISOString().split('T')[0];
+  const dateStr = businessDate();
   console.log('📅 查询日期:', dateStr);
 
   const dateInputs = page.locator('input[placeholder*="选择日期"], input.ant-calendar-picker-input');
@@ -140,39 +151,32 @@ async function exportFromCainiao() {
 
 async function main() {
   // 1. 从菜鸟导出
-  let file = null;
-  try {
-    file = await exportFromCainiao();
-  } catch (e) {
-    console.log('⚠️ 导出失败:', e.message);
+  const file = await exportFromCainiao();
+  if (!file || !fs.existsSync(file)) {
+    throw new Error('没有下载到新的库存文件，已停止后续导入、钉钉通知和云端同步。');
   }
 
-  // 2. 如果有新文件，导入到本地系统
-  if (file && fs.existsSync(file)) {
-    console.log('\n📥 正在导入本地系统...');
-    const targetDate = new Date();
-    const snapshotDate = targetDate.toISOString().split('T')[0];
+  // 2. 导入到本地系统
+  console.log('\n📥 正在导入本地系统...');
+  const snapshotDate = businessDate();
 
-    const result = importInventoryFile({
-      file,
-      warehouseId: 'cainiao',
-      snapshotDate,
-    });
-    console.log('✅ 导入完成:', result);
+  const result = importInventoryFile({
+    file,
+    warehouseId: 'cainiao',
+    snapshotDate,
+  });
+  console.log('✅ 导入完成:', result);
 
-    // 清理旧缓存：删除该仓库的旧快照，停用不在当前快照中的 SKU
-    console.log('\n🧹 清理旧库存缓存...');
-    const { getDb } = await import('./erp/db.js');
-    const db = getDb();
+  // 清理旧缓存：删除该仓库的旧快照，停用不在当前快照中的 SKU
+  console.log('\n🧹 清理旧库存缓存...');
+  const { getDb } = await import('./erp/db.js');
+  const db = getDb();
 
-    const deletedSnapshots = db.prepare("DELETE FROM inventory_snapshots WHERE warehouse_id = ? AND snapshot_date != ?").run('cainiao', snapshotDate);
-    console.log(`   删除旧快照: ${deletedSnapshots.changes} 条`);
+  const deletedSnapshots = db.prepare("DELETE FROM inventory_snapshots WHERE warehouse_id = ? AND snapshot_date != ?").run('cainiao', snapshotDate);
+  console.log(`   删除旧快照: ${deletedSnapshots.changes} 条`);
 
-    const inactiveResult = db.prepare("UPDATE skus SET status = 'inactive' WHERE source = 'inventory' AND status = 'active' AND sku NOT IN (SELECT sku FROM inventory_snapshots WHERE warehouse_id = 'cainiao' AND snapshot_date = ?)").run(snapshotDate);
-    console.log(`   清理旧 SKU: ${inactiveResult.changes} 个`);
-  } else {
-    console.log('ℹ️ 未获取到新文件，跳过导入，使用现有数据生成报告');
-  }
+  const inactiveResult = db.prepare("UPDATE skus SET status = 'inactive' WHERE source = 'inventory' AND status = 'active' AND sku NOT IN (SELECT sku FROM inventory_snapshots WHERE warehouse_id = 'cainiao' AND snapshot_date = ?)").run(snapshotDate);
+  console.log(`   清理旧 SKU: ${inactiveResult.changes} 个`);
 
   // 3. 生成库存报告
   console.log('\n📊 生成库存报告...');

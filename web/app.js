@@ -1595,7 +1595,9 @@ async function api(url, options = {}) {
 }
 
 function fillSelect(selector, items, valueKey, labelKey) {
-  document.querySelector(selector).innerHTML = items
+  const select = document.querySelector(selector);
+  if (!select) return;
+  select.innerHTML = items
     .map((item) => `<option value="${escapeAttr(item[valueKey])}">${escapeHtml(item[labelKey])}</option>`)
     .join("");
 }

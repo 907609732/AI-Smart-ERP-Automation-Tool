@@ -1,6 +1,8 @@
 # NAS 拆包视频服务
 
-该服务部署在飞牛 fnOS Docker 中，视频只写入 NAS 的 `data/sessions/`。云端 ERP 通过 HTTPS + HMAC 命令控制开始/结束，NAS 通过同一密钥回传视频索引；云端不会保存媒体文件。
+该服务部署在飞牛 fnOS Docker 中，视频只在收到开始扫码命令后写入 NAS 的 `data/sessions/`，空闲时不会循环录制。云端 ERP 通过 HTTPS + HMAC 命令控制开始/结束，NAS 通过同一密钥回传视频索引；云端不会保存媒体文件。
+
+每次会话会生成完整录像、开始扫码后前 5 秒的 `start_event`，以及完成扫码前后各约 5 秒的 `completion_event`。扫描完成条码后，服务会继续录制 5 秒再停止。
 
 ## 部署
 

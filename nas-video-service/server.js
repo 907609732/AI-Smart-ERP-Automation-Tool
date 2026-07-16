@@ -140,7 +140,14 @@ function spawnFfmpeg(camera, output, text) {
 }
 
 function inputArgs(camera) {
-  return camera.type === "nas_usb" ? ["-f", "v4l2", "-i", camera.source] : ["-rtsp_transport", "tcp", "-i", camera.source];
+  if (camera.type === "nas_usb") {
+    const input = ["-f", "v4l2"];
+    if (camera.inputFormat) input.push("-input_format", String(camera.inputFormat));
+    if (camera.videoSize) input.push("-video_size", String(camera.videoSize));
+    if (camera.framerate) input.push("-framerate", String(camera.framerate));
+    return [...input, "-i", camera.source];
+  }
+  return ["-rtsp_transport", "tcp", "-i", camera.source];
 }
 
 async function notifyCloud(payload) {

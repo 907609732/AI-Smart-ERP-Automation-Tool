@@ -136,7 +136,7 @@ async function createEventClip(sessionId, camera, timestamp, clipType) {
 
 function spawnFfmpeg(camera, output, text) {
   const args = [...inputArgs(camera), "-vf", `drawtext=fontfile=${process.env.FONT_FILE || ""}:text='${text}':x=24:y=24:fontcolor=white:fontsize=28:box=1:boxcolor=black@0.55`, "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-movflags", "+faststart", "-y", output];
-  return spawn("ffmpeg", ["-hide_banner", "-loglevel", "warning", ...args], { stdio: "ignore" });
+  return spawn("ffmpeg", ["-hide_banner", "-loglevel", "warning", ...args], { stdio: "ignore", env: { ...process.env, TZ: "Asia/Shanghai" } });
 }
 
 function inputArgs(camera) {
@@ -161,7 +161,7 @@ async function notifyCloud(payload) {
 
 function watermark(camera, session, state) {
   const label = escapeDrawText(`${session.trackingNo || ""} ${camera.name || camera.id} ${state}`);
-  return `${label} %{localtime\\\\:%Y-%m-%d %H\\\\\\\\:%M\\\\\\\\:%S}`;
+  return `${label} %{localtime}`;
 }
 function escapeDrawText(value) { return String(value || "").replace(/[':]/g, "\\$&"); }
 function safePart(value) { return String(value || "unknown").replace(/[^a-zA-Z0-9._-]+/g, "_"); }

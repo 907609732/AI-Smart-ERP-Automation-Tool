@@ -5,11 +5,11 @@
   <key>Label</key>
   <string>com.cainiao.inventory</string>
   <key>WorkingDirectory</key>
-  <string>/Users/chenyuecai/Documents/菜鸟云仓自动化操作</string>
+  <string>__PROJECT_ROOT__</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>scripts/collect-and-sync-to-cloud.sh</string>
+    <string>__PROJECT_ROOT__/scripts/collect-and-sync-to-cloud.sh</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -35,10 +35,12 @@
       <integer>0</integer>
     </dict>
   </array>
+  <key>StartInterval</key>
+  <integer>1800</integer>
   <key>StandardOutPath</key>
-  <string>/Users/chenyuecai/Documents/菜鸟云仓自动化操作/logs/launchd.out.log</string>
+  <string>__PROJECT_ROOT__/logs/launchd.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/chenyuecai/Documents/菜鸟云仓自动化操作/logs/launchd.err.log</string>
+  <string>__PROJECT_ROOT__/logs/launchd.err.log</string>
   <key>RunAtLoad</key>
   <false/>
   <key>ThrottleInterval</key>

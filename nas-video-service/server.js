@@ -161,7 +161,7 @@ async function notifyCloud(payload) {
 
 function watermark(camera, session, state) {
   const label = escapeDrawText(`${session.trackingNo || ""} ${camera.name || camera.id} ${state}`);
-  return `${label} %{localtime\\:%Y-%m-%d %H\\\\:%M\\\\:%S}`;
+  return `${label} %{localtime\\\\:%Y-%m-%d %H\\\\\\\\:%M\\\\\\\\:%S}`;
 }
 function escapeDrawText(value) { return String(value || "").replace(/[':]/g, "\\$&"); }
 function safePart(value) { return String(value || "unknown").replace(/[^a-zA-Z0-9._-]+/g, "_"); }

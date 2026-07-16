@@ -4,8 +4,8 @@
 
 1. 在 ERP 的“拆包取证”导入退货 Excel。系统会从各店铺工作表提取物流单号、平台、店铺、申请时间、状态和商品信息。
 2. 工位扫描物流单号后，ERP 创建“录制中”会话并向 NAS 发送 `start` 命令。
-3. NAS 持续保存完整录像；每路摄像头保留 5 秒循环缓存。开始扫码后 5 秒生成开始扫码取证片段。
-4. 扫描固定 Code128 条码 `UNPACK_COMPLETE` 后，ERP 将会话标记为完成并向 NAS 发送 `complete` 命令。NAS 继续录制 5 秒，再生成完成扫码取证片段和完整录像索引。
+3. NAS 仅在收到开始扫码命令后打开摄像头并保存完整录像，不在空闲时循环录制。开始取证片段保存开始扫码后的前 5 秒。
+4. 扫描固定 Code128 条码 `UNPACK_COMPLETE` 后，ERP 将会话标记为完成并向 NAS 发送 `complete` 命令。NAS 继续录制 5 秒，再生成包含完成扫码前后各约 5 秒的完成取证片段和完整录像索引。
 5. 云端只保存拆包记录、NAS 相对路径、校验值和状态；MP4 文件只保存在 NAS。
 
 `UNPACK_COMPLETE` 条码可直接从 ERP 工作台显示并打印。它绝不会作为物流单号参与订单匹配。
@@ -29,7 +29,7 @@ openssl rand -hex 32
 
 ## 飞牛 fnOS NAS 配置
 
-在 NAS 上选择一个大容量共享目录，例如 `/vol1/unpack-video-service`，复制 `nas-video-service` 文件夹到该目录：
+在 NAS 上选择一个大容量共享目录，例如“我的文件/12T备份盘”，复制 `nas-video-service` 文件夹到该目录：
 
 ```bash
 cd /vol1/unpack-video-service
@@ -85,7 +85,7 @@ docker compose logs -f
 - 电脑 USB 摄像头需要在电脑上将录像目录挂载到 NAS，并运行同一采集服务的工作站实例；部署时为它配置独立端口和摄像头 ID。该实例同样只通过 NAS 存储写入，不上传云端。
 - 手机扫码使用 ERP 工作台的“手机扫码”功能，手机需登录同一个受 Basic Auth 保护的 ERP；浏览器支持 `BarcodeDetector` 时可直接识别条码。
 - 钉钉管理员/操作员登录需要企业内部应用的 `CorpId`、应用 `AppKey/AppSecret` 和正式回调 URL。当前 ERP 保留操作员字段，外部登录尚未启用，不能假装已有钉钉授权。
-- NAS 保留策略建议用 fnOS 计划任务每天清理 `data/sessions` 中早于 90 天的目录。清理前先确认 ERP 已获得对应视频索引。
+- NAS 保留策略建议用 fnOS 计划任务每天清理 `data/sessions` 中早于 90 天的目录。服务空闲时不会写入录像或循环缓存；清理前先确认 ERP 已获得对应视频索引。
 
 ## 上线验收
 
@@ -94,4 +94,4 @@ curl -u '907609732:cyc1314520' https://erp.lttlt.top/api/health
 curl -u '907609732:cyc1314520' https://video.lttlt.top/health
 ```
 
-然后在 ERP 工作台中：导入 Excel、添加摄像头、扫描测试单号、等待 5 秒后扫描 `UNPACK_COMPLETE`。确认一条会话拥有 `full`、`start_event`、`completion_event` 三个视频索引，并在 NAS 的 `data/sessions/<会话ID>/` 看到文件。
+然后在 ERP 工作台中：导入 Excel、添加摄像头、扫描测试单号、等待至少 5 秒后扫描 `UNPACK_COMPLETE`。确认一条会话拥有 `full`、`start_event`、`completion_event` 三个视频索引，并在 NAS 的 `data/sessions/<会话ID>/` 看到文件。空闲时 `data/ring/` 不应产生新视频文件。

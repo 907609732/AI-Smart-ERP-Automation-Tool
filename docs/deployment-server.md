@@ -70,15 +70,24 @@ cp .env.production.example .env.production
 nano .env.production
 ```
 
+库存日报已切换为钉钉企业内部应用机器人。它必须已发布、已加入目标日报群，并启用 Stream 消息接收；不要把旧 Webhook 群机器人当作库存日报机器人。
+
 至少填写：
 
 ```bash
-DINGTALK_WEBHOOK=你的钉钉机器人 webhook
-DINGTALK_SECRET=你的钉钉机器人加签
+DINGTALK_CLIENT_ID=企业应用ClientID
+DINGTALK_CLIENT_SECRET=企业应用ClientSecret
+DINGTALK_REMINDER_ENABLED=true
+DINGTALK_REMINDER_TARGET_USER_ID=目标员工的钉钉userid
+DINGTALK_REMINDER_BOT_NAME=AI自动化机器人
+DINGTALK_REMINDER_ROBOT_CODE=企业应用RobotCode
+DINGTALK_REMINDER_CONVERSATION_ID=日报群会话ID
 LOW_STOCK_THRESHOLD=10
 ```
 
-不要把 `.env.production` 提交到 Git。
+`DINGTALK_REMINDER_CONVERSATION_ID` 首次可以留空：在日报群内先 `@AI自动化机器人 绑定日报群`，服务会记录该群会话；机器人加入多个群时，建议回填为固定值。目标员工在群内回复 `@AI自动化机器人 收到` 会停止本次催办；管理员回复 `@AI自动化机器人 取消` 会取消本次待确认报告。
+
+`DINGTALK_WEBHOOK` 和 `DINGTALK_SECRET` 只保留给历史兼容调用，不是库存日报必填项。不要把 `.env.production` 提交到 Git。
 
 ## 启动服务
 

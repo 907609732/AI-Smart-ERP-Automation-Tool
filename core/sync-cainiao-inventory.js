@@ -4,7 +4,7 @@ import path from 'path';
 import os from 'os';
 import { importInventoryFile } from './erp/importers.js';
 import { getInventoryReport, buildInventoryMarkdown } from './erp/reports.js';
-import { sendDingTalkMarkdown } from './dingtalk.js';
+import { sendInventoryDingTalkMarkdown } from './dingtalk.js';
 
 const authFile = path.join(process.cwd(), 'tests', '.auth', 'cainiao.json');
 const targetUrl = 'https://b.cainiao.com/business/dsc/oms/inventory/inventoryreport';
@@ -55,7 +55,8 @@ async function exportFromCainiao() {
   const browser = await chromium.launchPersistentContext(tempDir, {
     headless: false,
     viewport: { width: 1440, height: 900 },
-    args: ['--disable-blink-features=AutomationControlled'],
+    // The scheduled task must not inherit a stale desktop proxy from the copied Chrome profile.
+    args: ['--disable-blink-features=AutomationControlled', '--no-proxy-server'],
     acceptDownloads: true,
   });
 
@@ -188,9 +189,10 @@ async function main() {
   // 4. 发送钉钉
   console.log('\n📤 发送钉钉消息...');
   const markdown = buildInventoryMarkdown('table');
-  const dingResult = await sendDingTalkMarkdown({
+  const dingResult = await sendInventoryDingTalkMarkdown({
     title: markdown.title,
     text: markdown.text,
+    shouldNotify: markdown.shouldNotify,
   });
   console.log('✅ 钉钉发送结果:', dingResult);
 

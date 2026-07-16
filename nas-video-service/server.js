@@ -101,7 +101,12 @@ function startRing(camera) {
   if (ringProcesses.has(camera.id)) return;
   const directory = path.join(ringRoot, safePart(camera.id));
   fs.mkdirSync(directory, { recursive: true });
-  const args = [...inputArgs(camera), "-c", "copy", "-f", "segment", "-segment_time", "5", "-strftime", "1", path.join(directory, "%Y%m%d-%H%M%S.mp4")];
+  const args = [
+    ...inputArgs(camera),
+    "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-sc_threshold", "0", "-an",
+    "-f", "segment", "-segment_time", "5", "-segment_format", "mp4", "-reset_timestamps", "1",
+    "-strftime", "1", path.join(directory, "%Y%m%d-%H%M%S.mp4")
+  ];
   const child = spawn("ffmpeg", ["-hide_banner", "-loglevel", "warning", ...args], { stdio: "ignore" });
   child.on("exit", () => ringProcesses.delete(camera.id));
   ringProcesses.set(camera.id, child);

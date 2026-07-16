@@ -10,15 +10,13 @@ dotenv.config();
 const app = express();
 const port = Number(process.env.PORT || 4180);
 const dataRoot = "/data";
-const ringRoot = path.join(dataRoot, "ring");
 const sessionsRoot = path.join(dataRoot, "sessions");
 const camerasFile = process.env.CAMERAS_FILE || "/config/cameras.json";
 const secret = process.env.UNPACK_NAS_SHARED_SECRET || "";
 const callbacks = new Map();
-const ringProcesses = new Map();
 const sessionProcesses = new Map();
 
-for (const dir of [dataRoot, ringRoot, sessionsRoot]) fs.mkdirSync(dir, { recursive: true });
+for (const dir of [dataRoot, sessionsRoot]) fs.mkdirSync(dir, { recursive: true });
 app.use(express.json({ verify: (req, _res, buffer) => { req.rawBody = buffer.toString("utf8"); } }));
 
 app.get("/health", (_req, res) => {
@@ -61,16 +59,11 @@ async function startSession(command) {
   fs.writeFileSync(path.join(sessionDir, "session.json"), JSON.stringify({ command, receivedAt: new Date().toISOString() }, null, 2));
   const entries = new Map();
   for (const camera of cameras()) {
-    startRing(camera);
     const output = path.join(sessionDir, `${safePart(camera.id)}-full.mp4`);
     const process = spawnFfmpeg(camera, output, watermark(camera, session, "录制中"));
     entries.set(camera.id, { camera, process, output, startedAt: new Date() });
   }
   sessionProcesses.set(command.sessionId, { command, session, sessionDir, entries });
-  // Acknowledge the scanner command immediately; the after-event window is captured in the background.
-  void wait(5000).then(() => Promise.all([...entries.values()].map((entry) =>
-    createEventClip(command.sessionId, entry.camera, session.startedAt, "start_event")
-  ))).catch(() => null);
 }
 
 async function completeSession(command) {
@@ -83,8 +76,11 @@ async function completeSession(command) {
 
 async function finishSession(command, state) {
   await wait(5000);
-  for (const entry of state.entries.values()) entry.process.kill("SIGINT");
-  await Promise.all([...state.entries.values()].map((entry) => createEventClip(command.sessionId, entry.camera, new Date().toISOString(), "completion_event")));
+  await Promise.all([...state.entries.values()].map((entry) => stopProcess(entry.process)));
+  await Promise.all([...state.entries.values()].flatMap((entry) => [
+    createStartEventClip(command.sessionId, entry),
+    createCompletionEventClip(command.sessionId, entry)
+  ]));
   await Promise.all([...state.entries.values()].map((entry) => notifyCloud({
     sessionId: command.sessionId,
     clipType: "full",
@@ -97,45 +93,45 @@ async function finishSession(command, state) {
   })));
 }
 
-function startRing(camera) {
-  if (ringProcesses.has(camera.id)) return;
-  const directory = path.join(ringRoot, safePart(camera.id));
-  fs.mkdirSync(directory, { recursive: true });
-  const args = [
-    ...inputArgs(camera),
-    "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-sc_threshold", "0", "-an",
-    "-f", "segment", "-segment_time", "5", "-segment_format", "mp4", "-reset_timestamps", "1",
-    "-strftime", "1", path.join(directory, "%Y%m%d-%H%M%S.mp4")
-  ];
-  const child = spawn("ffmpeg", ["-hide_banner", "-loglevel", "warning", ...args], { stdio: "ignore" });
-  child.on("exit", () => ringProcesses.delete(camera.id));
-  ringProcesses.set(camera.id, child);
-}
-
-async function createEventClip(sessionId, camera, timestamp, clipType) {
-  const eventTime = new Date(timestamp || Date.now()).getTime();
-  const directory = path.join(ringRoot, safePart(camera.id));
-  const sourceFiles = fs.existsSync(directory)
-    ? fs.readdirSync(directory).map((name) => path.join(directory, name)).filter((file) => {
-        const age = fs.statSync(file).mtimeMs - eventTime;
-        return age >= -6000 && age <= 6000;
-      }).sort()
-    : [];
-  const output = path.join(sessionsRoot, safePart(sessionId), `${safePart(camera.id)}-${clipType}.mp4`);
-  if (sourceFiles.length) {
-    const concat = path.join(sessionsRoot, safePart(sessionId), `${safePart(camera.id)}-${clipType}.txt`);
-    fs.writeFileSync(concat, sourceFiles.map((file) => `file '${file.replace(/'/g, "'\\\\''")}'`).join("\n"));
-    await run("ffmpeg", ["-hide_banner", "-loglevel", "warning", "-f", "concat", "-safe", "0", "-i", concat, "-c", "copy", "-y", output]);
-  }
+async function createStartEventClip(sessionId, entry) {
+  const sessionDir = path.join(sessionsRoot, safePart(sessionId));
+  const output = path.join(sessionDir, `${safePart(entry.camera.id)}-start_event.mp4`);
+  await run("ffmpeg", ["-hide_banner", "-loglevel", "warning", "-i", entry.output, "-t", "5", "-c", "copy", "-y", output]);
+  const eventTime = entry.startedAt.getTime();
   await notifyCloud({
     sessionId,
-    clipType,
-    cameraId: camera.id,
+    clipType: "start_event",
+    cameraId: entry.camera.id,
     videoRef: relativeVideoRef(output),
-    startedAt: new Date(eventTime - 5000).toISOString(),
+    startedAt: new Date(eventTime).toISOString(),
     endedAt: new Date(eventTime + 5000).toISOString(),
     checksum: fileChecksum(output),
     status: fs.existsSync(output) ? "ready" : "failed"
+  });
+}
+
+async function createCompletionEventClip(sessionId, entry) {
+  const output = path.join(sessionsRoot, safePart(sessionId), `${safePart(entry.camera.id)}-completion_event.mp4`);
+  await run("ffmpeg", ["-hide_banner", "-loglevel", "warning", "-sseof", "-10", "-i", entry.output, "-c", "copy", "-y", output]);
+  const endedAt = Date.now();
+  await notifyCloud({
+    sessionId,
+    clipType: "completion_event",
+    cameraId: entry.camera.id,
+    videoRef: relativeVideoRef(output),
+    startedAt: new Date(endedAt - 10000).toISOString(),
+    endedAt: new Date(endedAt).toISOString(),
+    checksum: fileChecksum(output),
+    status: fs.existsSync(output) ? "ready" : "failed"
+  });
+}
+
+function stopProcess(child) {
+  if (!child || child.exitCode !== null || child.killed) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, 5000);
+    child.once("exit", () => { clearTimeout(timeout); resolve(); });
+    child.kill("SIGINT");
   });
 }
 
@@ -174,17 +170,5 @@ function relativeVideoRef(file) { return path.relative(dataRoot, file).split(pat
 function fileChecksum(file) { return fs.existsSync(file) ? crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex") : ""; }
 function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function run(command, args) { return new Promise((resolve) => { const child = spawn(command, args, { stdio: "ignore" }); child.on("exit", resolve); }); }
-
-setInterval(() => {
-  const cutoff = Date.now() - 15 * 1000;
-  for (const camera of cameras()) {
-    const directory = path.join(ringRoot, safePart(camera.id));
-    if (!fs.existsSync(directory)) continue;
-    for (const name of fs.readdirSync(directory)) {
-      const file = path.join(directory, name);
-      if (fs.statSync(file).mtimeMs < cutoff) fs.rmSync(file, { force: true });
-    }
-  }
-}, 5000).unref();
 
 app.listen(port, () => console.log(`NAS unpack video service listening on ${port}`));

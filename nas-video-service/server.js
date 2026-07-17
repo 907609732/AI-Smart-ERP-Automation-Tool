@@ -13,8 +13,13 @@ const dataRoot = "/data";
 const sessionsRoot = path.join(dataRoot, "sessions");
 const camerasFile = process.env.CAMERAS_FILE || "/config/cameras.json";
 const secret = process.env.UNPACK_NAS_SHARED_SECRET || "";
+const cloudCallbackUrl = process.env.CLOUD_CALLBACK_URL || "";
+const cloudPollUrl = process.env.CLOUD_COMMAND_POLL_URL || cloudCallbackUrl.replace(/\/video-clips\/?$/, "/commands/poll");
+const cloudAckUrl = process.env.CLOUD_COMMAND_ACK_URL || cloudCallbackUrl.replace(/\/video-clips\/?$/, "/commands/ack");
 const callbacks = new Map();
 const sessionProcesses = new Map();
+const processedCommands = new Set();
+let pollInFlight = false;
 
 for (const dir of [dataRoot, sessionsRoot]) fs.mkdirSync(dir, { recursive: true });
 app.use(express.json({ verify: (req, _res, buffer) => { req.rawBody = buffer.toString("utf8"); } }));
@@ -27,14 +32,20 @@ app.post("/v1/commands", async (req, res) => {
   try {
     verifyRequest(req);
     const command = req.body || {};
-    if (!command.sessionId || !["start", "complete"].includes(command.commandType)) throw new Error("无效的录像命令。");
-    if (command.commandType === "start") await startSession(command);
-    else await completeSession(command);
+    await executeCommand(command);
     res.status(202).json({ ok: true, commandId: command.id, sessionId: command.sessionId });
   } catch (error) {
     res.status(400).json({ ok: false, error: error.message });
   }
 });
+
+async function executeCommand(command) {
+  if (!command.sessionId || !["start", "complete"].includes(command.commandType)) throw new Error("无效的录像命令。");
+  if (command.id && processedCommands.has(command.id)) return;
+  if (command.commandType === "start") await startSession(command);
+  else await completeSession(command);
+  if (command.id) processedCommands.add(command.id);
+}
 
 function cameras() {
   if (!fs.existsSync(camerasFile)) return [];
@@ -152,12 +163,51 @@ function inputArgs(camera) {
 }
 
 async function notifyCloud(payload) {
-  const url = process.env.CLOUD_CALLBACK_URL || "";
-  if (!url || !secret) return;
-  const body = JSON.stringify(payload);
+  if (!cloudCallbackUrl || !secret) return;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await signedPost(cloudCallbackUrl, payload);
+      return;
+    } catch {
+      if (attempt < 3) await wait(attempt * 1000);
+    }
+  }
+}
+
+async function signedPost(url, payload) {
+  const body = JSON.stringify(payload || {});
   const timestamp = String(Date.now());
   const signature = crypto.createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
-  await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-unpack-timestamp": timestamp, "x-unpack-signature": signature }, body }).catch(() => null);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-unpack-timestamp": timestamp, "x-unpack-signature": signature },
+    body,
+    signal: AbortSignal.timeout(8000)
+  });
+  if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+  return response;
+}
+
+async function pollCloudCommand() {
+  if (pollInFlight || !cloudPollUrl || !cloudAckUrl || !secret) return;
+  pollInFlight = true;
+  let command = null;
+  try {
+    const response = await signedPost(cloudPollUrl, { agentId: process.env.NAS_AGENT_ID || "fnos-unpack-video" });
+    const result = await response.json();
+    command = result.data?.command || null;
+    if (!command) return;
+    try {
+      await executeCommand(command);
+      await signedPost(cloudAckUrl, { id: command.id, ok: true });
+    } catch (error) {
+      await signedPost(cloudAckUrl, { id: command.id, ok: false, error: error.message }).catch(() => null);
+    }
+  } catch (error) {
+    if (command) console.error(`NAS command ${command.id} failed: ${error.message}`);
+  } finally {
+    pollInFlight = false;
+  }
 }
 
 function watermark(camera, session, state) {
@@ -170,5 +220,10 @@ function relativeVideoRef(file) { return path.relative(dataRoot, file).split(pat
 function fileChecksum(file) { return fs.existsSync(file) ? crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex") : ""; }
 function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function run(command, args) { return new Promise((resolve) => { const child = spawn(command, args, { stdio: "ignore" }); child.on("exit", resolve); }); }
+
+if (cloudPollUrl) {
+  setInterval(() => void pollCloudCommand(), Number(process.env.CLOUD_COMMAND_POLL_INTERVAL_MS || 2000)).unref();
+  void pollCloudCommand();
+}
 
 app.listen(port, () => console.log(`NAS unpack video service listening on ${port}`));
